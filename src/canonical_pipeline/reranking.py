@@ -110,18 +110,90 @@ def _normalize_nonvisual(record: dict[str, Any]) -> list[dict[str, Any]]:
     return output
 
 
+def resolve_visual_frame_selection_anchor(
+    record: dict[str, Any],
+    nonvisual_candidates: list[dict[str, Any]],
+    visual_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Resolve the existing Task6 frame anchor without inventing a timestamp."""
+    temporal = [
+        item
+        for item in nonvisual_candidates
+        if any(role in item.get("roles", []) for role in ("trigger", "temporal_anchor"))
+    ]
+    if temporal:
+        timestamp = sum(
+            (float(item["start_time"]) + float(item["end_time"])) / 2
+            for item in temporal
+        ) / len(temporal)
+        return {
+            "source": "temporal_anchor_or_trigger",
+            "timestamp_sec": timestamp,
+            "candidate_ids": [item["candidate_id"] for item in temporal],
+        }
+    if visual_candidates:
+        selected = min(
+            enumerate(visual_candidates),
+            key=lambda pair: (
+                int(pair[1].get("task5b_selection_rank") or pair[0] + 1),
+                int(pair[1].get("query_rank") or 10**9),
+                -float(pair[1].get("similarity_score") or -1),
+                float(pair[1]["start_time"]),
+                pair[1]["candidate_id"],
+            ),
+        )[1]
+        return {
+            "source": "visual_semantic",
+            "timestamp_sec": (
+                float(selected["start_time"]) + float(selected["end_time"])
+            ) / 2,
+            "candidate_ids": [selected["candidate_id"]],
+            "source_interval": {
+                "start_sec": float(selected["start_time"]),
+                "end_sec": float(selected["end_time"]),
+            },
+            "semantic_anchor_candidate_id": selected.get(
+                "semantic_anchor_candidate_id"
+            ),
+        }
+    coarse = list(record["task5b_v1_1_input"].get("coarse_visual_candidates", []))
+    if coarse:
+        selected = min(
+            coarse,
+            key=lambda item: (
+                item.get("query_rank") is None,
+                int(item.get("query_rank") or 10**9),
+                -float(item.get("similarity_score") or -1),
+                float(item["start_time"]),
+                item["candidate_id"],
+            ),
+        )
+        return {
+            "source": "visual_semantic_coarse",
+            "timestamp_sec": (
+                float(selected["start_time"]) + float(selected["end_time"])
+            ) / 2,
+            "candidate_ids": [selected["candidate_id"]],
+            "source_interval": {
+                "start_sec": float(selected["start_time"]),
+                "end_sec": float(selected["end_time"]),
+            },
+        }
+    return {"source": "true_fallback", "timestamp_sec": None, "candidate_ids": []}
+
+
 def _visual_packet(record: dict[str, Any], candidates: list[dict[str, Any]], config: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
     source = [copy.deepcopy(item) for item in record["post_fallback_candidates"] if item.get("modality") == "visual"]
     frames = copy.deepcopy(record["task5b_v1_1_input"].get("selected_visual_evidence_frames", []))
     if not source and not frames:
         return None, [], []
-    anchors = [item for item in candidates if any(role in item.get("roles", []) for role in ("trigger", "temporal_anchor"))]
-    anchor_time = None if not anchors else sum((float(item["start_time"]) + float(item["end_time"])) / 2 for item in anchors) / len(anchors)
+    anchor = resolve_visual_frame_selection_anchor(record, candidates, source)
+    anchor_time = anchor["timestamp_sec"]
     selected, dropped_frames = deduplicate_visual_frames(frames, int(config["max_visual_frames_per_evidence_group"]), anchor_time)
     starts = [float(item["start_time"]) for item in source] or [float(item["timestamp"]) for item in selected]
     ends = [float(item["end_time"]) for item in source] or [float(item["timestamp"]) for item in selected]
     source_ids = [item["candidate_id"] for item in source]
-    packet = {"candidate_id": stable_id("visual_packet", record["case_id"], *source_ids), "candidate_type": "canonical_visual_evidence", "modality": "visual", "start_time": min(starts), "end_time": max(ends), "roles": ["resolver"], "canonical_visual_frames": selected, "dense_visual_provenance": any(frame.get("provenance") in {"dense_frame", "both"} for frame in selected), "source_candidate_ids": source_ids, "provenance": {"merged_visual_micro_windows": source, "canonical_frames_from_task5b_v1_1": selected}}
+    packet = {"candidate_id": stable_id("visual_packet", record["case_id"], *source_ids), "candidate_type": "canonical_visual_evidence", "modality": "visual", "start_time": min(starts), "end_time": max(ends), "roles": ["resolver"], "canonical_visual_frames": selected, "visual_frame_selection_anchor": anchor, "dense_visual_provenance": any(frame.get("provenance") in {"dense_frame", "both"} for frame in selected), "source_candidate_ids": source_ids, "provenance": {"merged_visual_micro_windows": source, "canonical_frames_from_task5b_v1_1": selected}}
     dropped = [{"candidate_id": item["candidate_id"], "reason": "overlapping_visual_window_merged" if len(source) > 1 else "visual_micro_window_represented_by_canonical_frames"} for item in source] + dropped_frames
     return packet, dropped, selected
 
@@ -178,12 +250,20 @@ def build_evidence_packet(state: CaseState, config: dict[str, Any]) -> CaseState
     initial_relations = temporal_relations(retained, record["task5a_plan_summary"]["answer_requirement"]["operation"])
     relation_construction_sec = time.perf_counter() - relation_started
     initial_groups = _groups(record, retained, initial_relations)
-    base = {"case_id": state.case_id, "question": state.question, "operation": record["task5a_plan_summary"]["answer_requirement"]["operation"], "required_modalities": record["task5a_plan_summary"]["resolver_modalities"], "required_evidence_modalities": required_modalities, "required_roles": required_roles, "candidates_before_reranking": before, "retained_evidence_groups": initial_groups, "retained_candidates": retained, "dropped_candidates": visual_drops + supporting_drops + budget_drops, "candidate_drop_reasons": visual_drops + supporting_drops + budget_drops, "relations": initial_relations, "selected_visual_frames": selected_frames, "local_audio_clips": copy.deepcopy(record.get("local_audio_clips", [])), "speech_segments": [item for item in retained if item.get("modality") == "speech"], "unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "source_unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "missing_information": [], "structural_evidence_status": record["evidence_status"], "questionable_followup_policy": record["questionable_followup_policy"], "dataset_or_query_inconsistency_status": "unknown", "budget_accounting": budget, "provenance": {"task5a_plan": copy.deepcopy(record["task5a_plan_summary"]), "task5c_v1_2_acoustic_diagnostics": copy.deepcopy(record.get("acoustic_evidence_diagnostics", [])), "fallback_history": copy.deepcopy(record.get("source_task5c_v1_1", {}))}}
+    base = {"case_id": state.case_id, "question": state.question, "operation": record["task5a_plan_summary"]["answer_requirement"]["operation"], "required_modalities": record["task5a_plan_summary"]["resolver_modalities"], "required_evidence_modalities": required_modalities, "required_roles": required_roles, "candidates_before_reranking": before, "retained_evidence_groups": initial_groups, "retained_candidates": retained, "dropped_candidates": visual_drops + supporting_drops + budget_drops, "candidate_drop_reasons": visual_drops + supporting_drops + budget_drops, "relations": initial_relations, "selected_visual_frames": selected_frames, "visual_frame_selection_anchor": copy.deepcopy((visual or {}).get("visual_frame_selection_anchor", {"source": "true_fallback", "timestamp_sec": None, "candidate_ids": []})), "local_audio_clips": copy.deepcopy(record.get("local_audio_clips", [])), "speech_segments": [item for item in retained if item.get("modality") == "speech"], "unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "source_unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "missing_information": [], "structural_evidence_status": record["evidence_status"], "questionable_followup_policy": record["questionable_followup_policy"], "dataset_or_query_inconsistency_status": "unknown", "budget_accounting": budget, "provenance": {"task5a_plan": copy.deepcopy(record["task5a_plan_summary"]), "task5c_v1_2_acoustic_diagnostics": copy.deepcopy(record.get("acoustic_evidence_diagnostics", [])), "fallback_history": copy.deepcopy(record.get("source_task5c_v1_1", {}))}}
     accounting = classify_candidate_accounting(base)
     # Frozen Task 6 v1.1 assigned selection priority before chronological
     # presentation; v1.2 then serialized that same retained set by timestamp.
     # These are deliberately separate semantics.
-    frames = chronological_frames(order_visual_frames(base["selected_visual_frames"], retained))
+    frames = chronological_frames(
+        order_visual_frames(
+            base["selected_visual_frames"],
+            retained,
+            anchor_time_override=base["visual_frame_selection_anchor"].get(
+                "timestamp_sec"
+            ),
+        )
+    )
     for candidate in retained:
         if candidate.get("candidate_type") == "canonical_visual_evidence":
             candidate["canonical_visual_frames"] = copy.deepcopy(frames)

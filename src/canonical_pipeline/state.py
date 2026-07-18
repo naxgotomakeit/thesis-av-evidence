@@ -23,6 +23,7 @@ class CaseState:
     mode: ExecutionMode
     source_video_path: str | None = None
     source_audio_path: str | None = None
+    available_modalities: tuple[str, ...] = ("visual", "speech", "acoustic")
     planner_output: dict[str, Any] | None = None
     deterministic_cues: dict[str, Any] = field(default_factory=dict)
     retrieval_result: dict[str, Any] | None = None

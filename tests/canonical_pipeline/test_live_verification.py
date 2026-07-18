@@ -33,7 +33,8 @@ def test_live_runner_does_not_accept_or_inject_frozen_planner_output():
     signature = inspect.signature(CanonicalOnlineRunner.run_live_case)
     assert "frozen_record" not in signature.parameters
     source = inspect.getsource(CanonicalOnlineRunner.run_live_case)
-    assert "run_planner(state, request=planner_request)" in source
+    assert "self.attempt_journal.planner_request(case_id, planner_request)" in source
+    assert "frozen_record" not in source
 
 
 def test_live_fallback_boundary_has_no_frozen_evidence_input():

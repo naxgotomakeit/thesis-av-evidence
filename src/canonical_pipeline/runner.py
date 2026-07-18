@@ -13,8 +13,10 @@ import yaml
 from src.instrumentation.timing import StageTimer, existing_offline_artifact_timings, timing_consistency
 
 from .final_qa import run_final_qa
+from .media_materialization import materialize_model_facing_acoustic_entities
 from .payload import build_final_payload
 from .planner import run_planner
+from .provider_journal import ProviderAttemptJournal
 from .reranking import build_evidence_packet
 from .retrieval import run_planner_guided_retrieval
 from .state import CaseState, ExecutionMode
@@ -37,6 +39,9 @@ class CanonicalOnlineRunner:
         data_root: Path | None = None,
         query_scorer: Any | None = None,
         materialization_root: Path | None = None,
+        attempt_journal: ProviderAttemptJournal | None = None,
+        post_planner_adapter: Callable[[CaseState], None] | None = None,
+        pre_final_qa_adapter: Callable[[CaseState], None] | None = None,
     ):
         self.config = config
         self.manifest_path = manifest_path or config.path("case_manifest")
@@ -44,9 +49,97 @@ class CanonicalOnlineRunner:
         self.data_root = data_root or (Path(configured_root) if configured_root else None)
         self.query_scorer = query_scorer
         self.materialization_root = materialization_root or config.project_root / "outputs/canonical_pipeline/runtime_media"
+        self.attempt_journal = attempt_journal or ProviderAttemptJournal(
+            self.materialization_root / "provider_attempt_journal"
+        )
+        self.post_planner_adapter = post_planner_adapter
+        self.pre_final_qa_adapter = pre_final_qa_adapter
+
+    def mark_case_checkpointed(self, case_id: str, checkpoint_path: Path) -> None:
+        """Close paid-provider attempts after a durable external checkpoint."""
+        self.attempt_journal.mark_case_checkpointed(case_id, checkpoint_path)
+
+    def _mark_planner_attempts_validated(self, state: CaseState) -> None:
+        for attempt in state.usage.get("task5a_v2", {}).get("attempts", []):
+            self.attempt_journal.validated(
+                state.case_id,
+                "question_planner",
+                int(attempt["request_number"]),
+                {
+                    "schema_valid": not bool(attempt.get("validation_errors")),
+                    "validation_errors": copy.deepcopy(attempt.get("validation_errors", [])),
+                },
+            )
+
+    def _mark_final_attempts_validated(self, state: CaseState) -> None:
+        for attempt in (state.final_model_output or {}).get("attempts", []):
+            number = int(attempt["attempt_number"])
+            record = next(
+                item
+                for item in self.attempt_journal.records(state.case_id)
+                if item["stage"] == "final_model_api" and int(item["attempt_number"]) == number
+            )
+            if record.get("state") != "response_saved":
+                continue
+            self.attempt_journal.validated(
+                state.case_id,
+                "final_model_api",
+                number,
+                {
+                    "structured_output_valid": bool(attempt.get("success")),
+                    "retry_reason": attempt.get("retry_reason"),
+                },
+            )
+
+    def _materialize_task6_acoustic_assets(self, state: CaseState) -> dict[str, Any]:
+        """Materialize only acoustic entities already exposed by Task6 groups."""
+        if state.evidence_packet is None:
+            raise ValueError("Task6 packet is required before acoustic asset finalization")
+        if state.mode is not ExecutionMode.EXECUTE_LIVE:
+            return {
+                "model_facing_acoustic_ids": [],
+                "materialized_clip_count": 0,
+                "materialization_latency_sec": 0.0,
+                "warnings": [],
+                "skipped": True,
+                "skip_reason": "regression_replay_uses_frozen_assets",
+            }
+        if not state.source_audio_path:
+            grouped_acoustic = any(
+                member.get("modality") == "acoustic"
+                for group in state.evidence_packet.get("retained_evidence_groups", [])
+                for member in group.get("retained_candidates", [])
+            )
+            if grouped_acoustic:
+                raise FileNotFoundError("Model-facing acoustic evidence requires source audio")
+            return {
+                "model_facing_acoustic_ids": [],
+                "materialized_clip_count": 0,
+                "materialization_latency_sec": 0.0,
+                "warnings": [],
+            }
+        audit = materialize_model_facing_acoustic_entities(
+            state.evidence_packet,
+            case_id=state.case_id,
+            source_audio=Path(state.source_audio_path),
+            output_root=self.materialization_root,
+            project_root=self.config.project_root,
+        )
+        if state.sufficiency_result is not None:
+            state.sufficiency_result["final_model_facing_local_audio_clips"] = copy.deepcopy(
+                state.evidence_packet.get("local_audio_clips", [])
+            )
+        state.record(
+            "model_facing_acoustic_materialization",
+            "task6_membership_preserved_assets_finalized",
+            selection_changed=False,
+            model_facing_acoustic_ids=audit["model_facing_acoustic_ids"],
+        )
+        return audit
 
     def _safe_case(self, case_id: str) -> dict[str, Any]:
-        rows = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        rows = manifest.get("cases", []) if isinstance(manifest, dict) else manifest
         source = next((row for row in rows if row["case_id"] == case_id), None)
         if source is None:
             raise KeyError(f"Unknown case_id: {case_id}")
@@ -54,29 +147,51 @@ class CanonicalOnlineRunner:
         question = str(source.get("question", "")).strip()
         if not video_id or not question:
             raise ValueError(f"Manifest case lacks video_id or question: {case_id}")
+        declared = source.get("available_modalities")
+        available_modalities = tuple(
+            modality
+            for modality in ("visual", "speech", "acoustic")
+            if declared is None or modality in declared
+        )
+        if not available_modalities:
+            raise ValueError(f"Manifest case has no available modalities: {case_id}")
         index_files = [
             self.config.project_root / "outputs/visual_index" / video_id / "visual_state_regions.json",
             self.config.project_root / "outputs/visual_index" / video_id / "region_embeddings.npy",
-            self.config.project_root / "outputs/audio_index" / video_id / "transcript_embedding_index.json",
-            self.config.project_root / "outputs/audio_index" / video_id / "transcript_embeddings.npy",
-            self.config.project_root / "outputs/audio_index" / video_id / "acoustic_embedding_index.json",
-            self.config.project_root / "outputs/audio_index" / video_id / "acoustic_embeddings.npy",
         ]
+        if "speech" in available_modalities:
+            index_files.extend([
+                self.config.project_root / "outputs/audio_index" / video_id / "transcript_embedding_index.json",
+                self.config.project_root / "outputs/audio_index" / video_id / "transcript_embeddings.npy",
+            ])
+        if "acoustic" in available_modalities:
+            index_files.extend([
+                self.config.project_root / "outputs/audio_index" / video_id / "acoustic_embedding_index.json",
+                self.config.project_root / "outputs/audio_index" / video_id / "acoustic_embeddings.npy",
+            ])
         missing = [str(path) for path in index_files if not path.is_file()]
         if missing:
             raise FileNotFoundError(f"Reusable offline indexes missing for {case_id}: {missing}")
-        audio_metadata = json.loads((self.config.project_root / "outputs/audio_index" / video_id / "audio_metadata.json").read_text(encoding="utf-8"))
-        source_audio = Path(audio_metadata["audio_path"])
+        audio_metadata_path = self.config.project_root / "outputs/audio_index" / video_id / "audio_metadata.json"
+        source_audio = None
+        if {"speech", "acoustic"}.intersection(available_modalities):
+            if not audio_metadata_path.is_file():
+                raise FileNotFoundError(f"Audio metadata missing for available audio modality: {case_id}")
+            audio_metadata = json.loads(audio_metadata_path.read_text(encoding="utf-8"))
+            source_audio = Path(audio_metadata["audio_path"])
         source_video: Path | None = None
         if self.data_root is not None and source.get("video_path"):
             source_video = self.data_root / str(source["video_path"])
         if self.manifest_path.resolve() != self.config.path("case_manifest").resolve():
             if source_video is None or not source_video.is_file():
                 raise FileNotFoundError(f"Source video unavailable for manifest case {case_id}; configure EGOSOUND_DATA_ROOT")
-            if not source_audio.is_file():
+            if source_audio is not None and not source_audio.is_file():
                 raise FileNotFoundError(f"Source audio unavailable for manifest case {case_id}: {source_audio}")
         # Strict allowlist: gold/reference/answer fields never enter CaseState.
-        return {"case_id": source["case_id"], "video_id": video_id, "question": question, "video_duration": float(source["video_duration"]), "source_video_path": str(source_video) if source_video else None, "source_audio_path": str(source_audio)}
+        duration = source.get("video_duration", source.get("duration_sec"))
+        if duration is None:
+            raise ValueError(f"Manifest case lacks video duration: {case_id}")
+        return {"case_id": source["case_id"], "video_id": video_id, "question": question, "video_duration": float(duration), "source_video_path": str(source_video) if source_video else None, "source_audio_path": str(source_audio) if source_audio else None, "available_modalities": available_modalities}
 
     def validate_case(self, case_id: str) -> dict[str, Any]:
         """Validate one manifest-selected case and return only online-safe fields."""
@@ -92,8 +207,19 @@ class CanonicalOnlineRunner:
         final_client: Any | None = None,
     ) -> CaseState:
         """Run one case without serialized stage handoffs or historical patches."""
+        if mode is ExecutionMode.EXECUTE_LIVE:
+            if planner_request is None or fallback_executor is None or final_client is None:
+                raise ValueError(
+                    "Live execution requires planner, fallback, and final-client boundaries"
+                )
+            return self.run_live_case(
+                case_id,
+                planner_request=planner_request,
+                fallback_executor=fallback_executor,
+                final_client=final_client,
+            )
         case = self._safe_case(case_id)
-        state = CaseState(case_id=case["case_id"], video_id=case["video_id"], question=case["question"], video_duration_sec=case["video_duration"], mode=mode, source_video_path=case["source_video_path"], source_audio_path=case["source_audio_path"])
+        state = CaseState(case_id=case["case_id"], video_id=case["video_id"], question=case["question"], video_duration_sec=case["video_duration"], mode=mode, source_video_path=case["source_video_path"], source_audio_path=case["source_audio_path"], available_modalities=case["available_modalities"])
         plans = _jsonl_by_case(self.config.path("planner_plans"))
         frozen_task5c = _jsonl_by_case(self.config.path("task5c_frozen"))
         budget = yaml.safe_load(self.config.path("task6_budget").read_text(encoding="utf-8"))
@@ -110,15 +236,13 @@ class CanonicalOnlineRunner:
             with timer.stage("relation_reranking", parent_stage="online_end_to_end_total"):
                 build_evidence_packet(state, budget)
             with timer.stage("final_payload_build", parent_stage="online_end_to_end_total"):
+                self._materialize_task6_acoustic_assets(state)
                 build_final_payload(state, self.config.project_root)
             if mode is ExecutionMode.REGRESSION_REPLAY:
                 timer.skip("final_model_api", "regression_replay_zero_external_calls", parent_stage="online_end_to_end_total")
                 timer.skip("structured_output_parse", "regression_replay_zero_external_calls", parent_stage="final_model_api")
                 timer.skip("local_validation", "regression_replay_zero_external_calls", parent_stage="online_end_to_end_total")
                 run_final_qa(state, self.config.project_root)
-            else:
-                with timer.stage("final_model_api", parent_stage="online_end_to_end_total"):
-                    run_final_qa(state, self.config.project_root, final_client)
         state.timings = existing_offline_artifact_timings() + timer.as_dicts()
         return state
 
@@ -133,16 +257,24 @@ class CanonicalOnlineRunner:
     ) -> CaseState:
         """Execute the real canonical online path with complete stage records."""
         case = self._safe_case(case_id)
+        self.attempt_journal.assert_case_resumable(case_id)
         state = CaseState(
             case_id=case["case_id"], video_id=case["video_id"], question=case["question"],
             video_duration_sec=case["video_duration"], mode=ExecutionMode.EXECUTE_LIVE,
             source_video_path=case["source_video_path"], source_audio_path=case["source_audio_path"],
+            available_modalities=case["available_modalities"],
         )
         budget = yaml.safe_load(self.config.path("task6_budget").read_text(encoding="utf-8"))
         timer = StageTimer()
         with timer.stage("online_end_to_end_total"):
             with timer.stage("question_planner", parent_stage="online_end_to_end_total") as stage:
-                run_planner(state, request=planner_request)
+                run_planner(
+                    state,
+                    request=self.attempt_journal.planner_request(case_id, planner_request),
+                )
+                if self.post_planner_adapter is not None:
+                    self.post_planner_adapter(state)
+                self._mark_planner_attempts_validated(state)
                 stage.api_calls = state.external_calls["planner"]
                 stage.model_calls = state.external_calls["planner"]
 
@@ -222,6 +354,11 @@ class CanonicalOnlineRunner:
             timer.measured("evidence_packet_build", c6["evidence_packet_build_sec"], parent_stage="reranking_and_packet")
 
             with timer.stage("final_payload_build", parent_stage="online_end_to_end_total"):
+                with timer.stage(
+                    "model_facing_acoustic_materialization",
+                    parent_stage="final_payload_build",
+                ):
+                    self._materialize_task6_acoustic_assets(state)
                 build_final_payload(state, self.config.project_root)
             if state.preflight_result and state.preflight_result["status"] == "blocked":
                 if not return_preflight_blocked:
@@ -244,8 +381,15 @@ class CanonicalOnlineRunner:
                 }
                 state.record("final_model_api", "skipped_task7a_preflight_blocked", external_calls=0)
             else:
+                if self.pre_final_qa_adapter is not None:
+                    self.pre_final_qa_adapter(state)
                 with timer.stage("final_model_pipeline", parent_stage="online_end_to_end_total"):
-                    run_final_qa(state, self.config.project_root, final_client)
+                    run_final_qa(
+                        state,
+                        self.config.project_root,
+                        self.attempt_journal.gemini_client(case_id, final_client),
+                    )
+                    self._mark_final_attempts_validated(state)
                 c7 = state.usage["task7b_v3_runtime"]
                 timer.measured("final_model_api", c7["final_model_api_stage_sec"], parent_stage="final_model_pipeline", api_calls=c7["total_api_calls"], model_calls=c7["total_api_calls"])
                 timer.measured("structured_output_parse", c7["structured_output_parse_sec"], parent_stage="final_model_pipeline")

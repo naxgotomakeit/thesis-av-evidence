@@ -27,7 +27,12 @@ from src.canonical_pipeline.live_boundaries import (  # noqa: E402
     anthropic_requester,
     environment_presence,
 )
-from src.canonical_pipeline.fingerprint import build_run_fingerprint  # noqa: E402
+from src.canonical_pipeline.fingerprint import (  # noqa: E402
+    attach_run_fingerprint,
+    build_run_fingerprint,
+    case_run_fingerprint,
+    validate_reusable_result_fingerprint,
+)
 from src.canonical_pipeline.query_scoring import FreshQueryScorer  # noqa: E402
 from src.canonical_pipeline.runner import CanonicalOnlineRunner  # noqa: E402
 from src.canonical_pipeline.smoke_trace import (  # noqa: E402
@@ -382,6 +387,21 @@ def main() -> int:
         ),
         planner_model=os.environ.get("ANTHROPIC_MODEL"),
     )
+    manifest_rows_by_case = {
+        row["case_id"]: row
+        for row in json.loads(manifest_path.read_text(encoding="utf-8"))
+        if row["case_id"] in SMOKE_CASES
+    }
+    case_fingerprints = {
+        case_id: case_run_fingerprint(
+            manifest["run_fingerprint"], str(manifest_rows_by_case[case_id]["video_id"])
+        )
+        for case_id in SMOKE_CASES
+    }
+    manifest["case_fingerprint_sha256"] = {
+        case_id: value["fingerprint_sha256"]
+        for case_id, value in case_fingerprints.items()
+    }
     OUT.mkdir(parents=True, exist_ok=True)
     _write_json(OUT / "run_manifest.json", manifest)
     if not args.execute_live:
@@ -398,6 +418,10 @@ def main() -> int:
     # Cold model startup is intentionally outside every per-question online
     # timer and happens once for the persistent scorer.
     all_already_complete = all(store.load(case_id) is not None for case_id in SMOKE_CASES)
+    for case_id in SMOKE_CASES:
+        reusable = store.load(case_id)
+        if reusable is not None:
+            validate_reusable_result_fingerprint(reusable, case_fingerprints[case_id])
     prior_cold = prior_manifest.get("encoder_cold_start_sec")
     cold = prior_cold if all_already_complete and isinstance(prior_cold, dict) else scorer.preload("00002", ("visual", "speech", "acoustic"))
     manifest["encoder_cold_start_sec"] = cold
@@ -423,8 +447,9 @@ def main() -> int:
             if state.fallback_execution_count > 1:
                 raise RuntimeError(f"Fallback executed more than once: {case_id}")
             trace = case_runtime_trace(state)
-            trace["run_fingerprint_sha256"] = manifest["run_fingerprint"]["fingerprint_sha256"]
-            store.save(case_id, trace)
+            attach_run_fingerprint(trace, case_fingerprints[case_id])
+            checkpoint_path = store.save(case_id, trace)
+            runner.mark_case_checkpointed(case_id, checkpoint_path)
             cases = [item for item in (store.load(cid) for cid in SMOKE_CASES) if item is not None]
             _split_rows(cases)
             manifest["completed_cases"] = [item["case_id"] for item in cases]

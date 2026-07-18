@@ -129,6 +129,31 @@ def link_candidates(candidates: list[dict[str, Any]], relation: str, max_proximi
 DEFAULT_LIMITS={"maximum_linked_windows":3,"maximum_total_selected_duration_sec":12.0,"maximum_visual_micro_windows":2,"maximum_acoustic_candidates":3,"maximum_speech_candidates":5}
 
 
+def rank_visual_micro_candidates(
+    candidates: list[dict[str, Any]], *, meaningful_temporal_anchor: bool
+) -> list[dict[str, Any]]:
+    """Rank micro-windows without treating a whole-video scope as an anchor."""
+    if meaningful_temporal_anchor:
+        return sorted(
+            candidates,
+            key=lambda item: (
+                float(item["anchor_distance_sec"]),
+                float(item["start_time"]),
+                str(item["microclip_id"]),
+            ),
+        )
+    return sorted(
+        candidates,
+        key=lambda item: (
+            item.get("semantic_similarity_score") is None,
+            -float(item.get("semantic_similarity_score") or 0.0),
+            int(item.get("semantic_query_rank") or 10**9),
+            float(item["start_time"]),
+            str(item["microclip_id"]),
+        ),
+    )
+
+
 def apply_budget(candidates: list[dict[str, Any]], operation: str) -> tuple[list[dict[str, Any]],dict[str,Any]]:
     if operation in {"count_occurrences","measure_delay"}:
         return list(candidates),{"policy":f"{operation}_operation_exception_preserves_all_occurrences_or_sequence_candidates","limits":{},"removed_candidates":[]}
@@ -194,8 +219,24 @@ def canonical_visual_frames(
         frame_video_id = str(frame.get("video_id") or video_id or "unknown_video")
         key = (frame_video_id, timestamp_ms)
         item = merged.setdefault(key, {"video_id": frame_video_id, "timestamp": timestamp_ms / 1000.0, "normalized_timestamp_ms": timestamp_ms, "canonical_frame_path": path, "provenance": "dense_frame", "source_candidate_ids": [], "provenance_records": []})
+        dense_sources = [str(value) for value in frame.get("source_candidate_ids", []) if value]
+        for source_id in dense_sources:
+            if source_id not in item["source_candidate_ids"]:
+                item["source_candidate_ids"].append(source_id)
         had_micro = any(x["type"] == "micro_window" for x in item["provenance_records"])
         item["canonical_frame_path"] = path
         item["provenance"] = "both" if had_micro else "dense_frame"
-        item["provenance_records"].append({"type":"dense_frame","frame_path":path,"dense_frame_id":frame.get("dense_frame_id")})
+        dense_record = {
+            "type": "dense_frame",
+            "frame_path": path,
+            "dense_frame_id": frame.get("dense_frame_id"),
+        }
+        if "source_candidate_ids" in frame:
+            dense_record.update({
+                "source_candidate_ids": dense_sources,
+                "source_coarse_candidate_ids": [str(value) for value in frame.get("source_coarse_candidate_ids", []) if value],
+                "source_refinement_interval": copy.deepcopy(frame.get("source_refinement_interval")),
+                "lineage_basis": frame.get("lineage_basis"),
+            })
+        item["provenance_records"].append(dense_record)
     return [merged[key] for key in sorted(merged)]

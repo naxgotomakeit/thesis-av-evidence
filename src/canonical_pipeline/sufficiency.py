@@ -50,7 +50,12 @@ def _task5b_summary(state: CaseState) -> dict[str, Any]:
 
 def _diagnostics(state: CaseState, candidates: list[dict[str, Any]], frozen: dict[str, Any] | None) -> list[dict[str, Any]]:
     if frozen is not None:
-        return copy.deepcopy(frozen.get("acoustic_evidence_diagnostics", []))
+        candidate_ids = {item.get("candidate_id") for item in candidates}
+        return [
+            copy.deepcopy(item)
+            for item in frozen.get("acoustic_evidence_diagnostics", [])
+            if item.get("candidate_id") in candidate_ids
+        ]
     plan = state.planner_output or {}
     semantics = timestamp_semantics(state.question, state.deterministic_cues, (state.retrieval_result or {}).get("anchor_resolution", {}))
     role = acoustic_evidence_role(plan)
@@ -115,9 +120,11 @@ def run_evidence_sufficiency(
             )
     post_started = time.perf_counter()
     post, _ = classify_v1_1(context, state.planner_output, state.deterministic_cues, post_candidates)
-    diagnostics = _diagnostics(state, post_candidates, frozen_v1_2 if state.mode is ExecutionMode.REGRESSION_REPLAY else None)
-    pre_final = recompute_structural_status(pre, diagnostics)
-    post_final = recompute_structural_status(post, diagnostics)
+    frozen_diagnostics = frozen_v1_2 if state.mode is ExecutionMode.REGRESSION_REPLAY else None
+    pre_diagnostics = _diagnostics(state, pre_candidates, frozen_diagnostics)
+    post_diagnostics = _diagnostics(state, post_candidates, frozen_diagnostics)
+    pre_final = recompute_structural_status(pre, pre_diagnostics)
+    post_final = recompute_structural_status(post, post_diagnostics)
     post_duration = time.perf_counter() - post_started
     additional = post_final["evidence_status"] == "insufficient"
     task5b_summary = _task5b_summary(state)
@@ -144,7 +151,10 @@ def run_evidence_sufficiency(
         "additional_fallback_required": additional,
         "questionable_followup_policy": "deferred_to_future_ablation",
         "automatic_additional_fallback_triggered": False,
-        "acoustic_evidence_diagnostics": diagnostics,
+        "pre_fallback_acoustic_evidence_diagnostics": pre_diagnostics,
+        "post_fallback_acoustic_evidence_diagnostics": post_diagnostics,
+        # Backward-compatible final diagnostic view; explicitly post-fallback.
+        "acoustic_evidence_diagnostics": post_diagnostics,
         "local_audio_clips": clips,
         "local_audio_materialization_warnings": materialization_warnings,
         "visual_efficiency_accounting": visual_accounting(task5b_summary),

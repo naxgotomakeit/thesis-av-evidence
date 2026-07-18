@@ -18,7 +18,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.canonical_pipeline.live_boundaries import LazyWhisperFallback, anthropic_requester, environment_presence  # noqa: E402
-from src.canonical_pipeline.fingerprint import build_run_fingerprint  # noqa: E402
+from src.canonical_pipeline.fingerprint import (  # noqa: E402
+    attach_run_fingerprint,
+    build_run_fingerprint,
+    case_run_fingerprint,
+    validate_reusable_result_fingerprint,
+)
 from src.canonical_pipeline.query_scoring import FreshQueryScorer  # noqa: E402
 from src.canonical_pipeline.runner import CanonicalOnlineRunner  # noqa: E402
 from src.canonical_pipeline.smoke_trace import augment_checkpoint_temporal_audit, case_runtime_trace, reconstruct_evidence_funnel  # noqa: E402
@@ -94,13 +99,18 @@ def smoke_compatibility() -> dict[str, Any]:
     return {"compatible": all(checks.values()), "checks": checks, "source_manifest": run}
 
 
-def seed_reused_cases(store: CaseCheckpointStore, compatibility: dict[str, Any]) -> None:
+def seed_reused_cases(
+    store: CaseCheckpointStore,
+    compatibility: dict[str, Any],
+    expected_fingerprints: dict[str, dict[str, Any]],
+) -> None:
     if not compatibility["compatible"]:
         raise RuntimeError(f"Generalized smoke results are not reusable: {compatibility['checks']}")
     for case_id in REUSED_CASES:
         if store.load(case_id) is not None:
             continue
         source = json.loads((SMOKE_ROOT / "checkpoints" / f"{case_id}.json").read_text(encoding="utf-8"))
+        validate_reusable_result_fingerprint(source, expected_fingerprints[case_id])
         source["source_run"] = "new_case_smoke_v0_1"
         source["reused_without_api_call"] = True
         store.save(case_id, source)
@@ -184,15 +194,33 @@ def main() -> int:
     config = load_canonical_config(ROOT)
     scorer = FreshQueryScorer(ROOT)
     runner = CanonicalOnlineRunner(config, manifest_path=manifest_path, data_root=args.data_root, query_scorer=scorer, materialization_root=OUT / "runtime_media")
-    compatibility = smoke_compatibility()
     readiness = validate_cases(runner, safe_rows)
     presence = environment_presence()
     before = frozen_hashes(config)
     OUT.mkdir(parents=True, exist_ok=True)
     store = CaseCheckpointStore(CHECKPOINTS)
-    seed_reused_cases(store, compatibility)
+    current_fingerprint = build_run_fingerprint(
+        ROOT,
+        config,
+        manifest_path,
+        (row["video_id"] for row in safe_rows),
+        planner_model=os.environ.get("ANTHROPIC_MODEL"),
+    )
+    case_fingerprints = {
+        row["case_id"]: case_run_fingerprint(current_fingerprint, row["video_id"])
+        for row in safe_rows
+    }
+    compatibility = smoke_compatibility()
+    seed_reused_cases(store, compatibility, case_fingerprints)
     existing_before = set(store.completed_case_ids())
     incomplete = [case_id for case_id in case_ids if case_id not in existing_before]
+    for completed_case_id in sorted(existing_before.intersection(case_ids)):
+        reusable = store.load(completed_case_id)
+        if reusable is None:
+            raise RuntimeError(f"Missing reusable checkpoint: {completed_case_id}")
+        validate_reusable_result_fingerprint(
+            reusable, case_fingerprints[completed_case_id]
+        )
     prior_manifest_path = OUT / "run_manifest.json"
     prior_manifest = (
         json.loads(prior_manifest_path.read_text(encoding="utf-8"))
@@ -229,13 +257,11 @@ def main() -> int:
         "model_settings": {"gemini": "gemini-3.5-flash", "thinking_level": "low", "store": False},
         "frozen_hashes_before": before,
     }
-    run_manifest["run_fingerprint"] = build_run_fingerprint(
-        ROOT,
-        config,
-        manifest_path,
-        (row["video_id"] for row in safe_rows),
-        planner_model=os.environ.get("ANTHROPIC_MODEL"),
-    )
+    run_manifest["run_fingerprint"] = current_fingerprint
+    run_manifest["case_fingerprint_sha256"] = {
+        case_id: value["fingerprint_sha256"]
+        for case_id, value in case_fingerprints.items()
+    }
     run_manifest["reused_result_fingerprint_policy"] = (
         "required_for_future_results; pre-fingerprint completed pilot retained as historical artifact"
     )
@@ -286,9 +312,10 @@ def main() -> int:
             trace = case_runtime_trace(state)
             trace["source_run"] = "full_pilot_v0_1"
             trace["reused_without_api_call"] = False
-            trace["run_fingerprint_sha256"] = run_manifest["run_fingerprint"]["fingerprint_sha256"]
+            attach_run_fingerprint(trace, case_fingerprints[case_id])
             enrich_initial_candidates(trace, ROOT)
-            store.save(case_id, trace)
+            checkpoint_path = store.save(case_id, trace)
+            runner.mark_case_checkpointed(case_id, checkpoint_path)
             if case_id not in newly_executed:
                 newly_executed.append(case_id)
             resumed_this_process.append(case_id)

@@ -104,11 +104,15 @@ def classify_candidate_accounting(packet: dict[str, Any]) -> dict[str, list[dict
     }
 
 
-def order_visual_frames(frames: list[dict[str, Any]], retained: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def order_visual_frames(
+    frames: list[dict[str, Any]],
+    retained: list[dict[str, Any]],
+    anchor_time_override: float | None = None,
+) -> list[dict[str, Any]]:
     """Preserve selection priority but expose chronological downstream order."""
     anchors = [item for item in retained if "temporal_anchor" in item.get("roles", []) or "trigger" in item.get("roles", [])]
-    anchor_time = None
-    if anchors:
+    anchor_time = anchor_time_override
+    if anchor_time is None and anchors:
         anchor_time = sum((float(item["start_time"]) + float(item["end_time"])) / 2 for item in anchors) / len(anchors)
     ranked = []
     for rank, frame in enumerate(frames, start=1):

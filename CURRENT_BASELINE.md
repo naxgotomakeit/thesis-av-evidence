@@ -21,6 +21,35 @@ The canonical runner performs one Task 5C sufficiency decision and executes
 fallback at most once. It then builds one final Task 6 v1.2 packet directly.
 Intermediate JSON files may be saved for audit but are not handoff requirements.
 
+For generalized execution, the case allowlist is supplied by an explicit
+manifest. The online Task 5B boundary encodes each new raw question with the
+validated Task 4 CLIP, Sentence-T5, and CLAP text encoders as required, then
+scores the existing question-independent indexes by normalized cosine
+similarity. Historical `outputs/retrieval/<case_id>` score files are regression
+references only and are not runtime dependencies. Query model loading,
+encoding, and similarity search are measured as online work.
+
+Task 5C v1.2 materializes already-selected acoustic intervals into local WAV
+evidence when their role is `direct_evidence`, `temporal_anchor`, or `resolver`.
+This is evidence packaging, not a new retrieval or selection rule; canonical
+correctness does not depend on a historical Task 5C clip already existing.
+
+## Technical contracts (no research-policy change)
+
+The canonical producer contract distinguishes candidate entities, retained
+evidence entities, media assets, relations, evidence groups, and packet
+records. Every Task 6 retained entity is either serialized into exactly one
+model-facing Task 7A group or explicitly marked non-model-facing with a reason.
+Model-facing relations are unique directed edges whose endpoints both exist in
+the supplied evidence set. Frame and WAV assets never inflate evidence counts.
+
+Task 7A embeds the exact Pydantic schema consumed by logical Task 7B v3; the
+schema no longer has a separate illustrative copy. Future runs carry a
+secret-free fingerprint of the Git revision, canonical versions/configuration,
+prompt and schema hashes, model settings, manifest, and every used offline
+index bundle. Every newly encountered video/index bundle is validated against
+the persistent encoder contract without reloading the encoder.
+
 Regression mode injects the frozen Task 5A plan and, where required, the frozen
 Task 5C fallback evidence. It makes zero external calls. Live mode has explicit
 planner, fallback and Gemini client boundaries and remains opt-in. The first

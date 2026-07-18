@@ -21,15 +21,41 @@ from src.retrieval.task6_v1_1 import (
     classify_candidate_accounting,
     classify_modalities,
     corrected_relations,
+    order_visual_frames,
 )
 from src.retrieval.task6_v1_2 import (
+    candidate_identity_accounting,
     candidate_count_consistent,
     chronological_frames,
     corrected_budget_accounting,
     correct_response_relations,
 )
 
+from .contracts import stabilize_relations, validate_packet_contract
 from .state import CaseState
+
+
+VISUAL_FRAME_CONTRACT_FIELDS = {
+    "timestamp", "canonical_frame_path", "selection_rank",
+    "presentation_order", "anchor_distance_sec",
+}
+
+
+def validate_visual_frame_contract(packet: dict[str, Any]) -> None:
+    """Fail before Task 7A when Task 6 visual serialization is incomplete."""
+    frames = packet.get("selected_visual_frames", [])
+    for index, frame in enumerate(frames):
+        missing = VISUAL_FRAME_CONTRACT_FIELDS.difference(frame)
+        if missing:
+            raise ValueError(
+                "Task6->Task7A visual serialization contract violation: "
+                f"frame {index} missing {sorted(missing)}"
+            )
+    expected_order = list(range(1, len(frames) + 1))
+    if [frame["presentation_order"] for frame in frames] != expected_order:
+        raise ValueError("Task6->Task7A visual presentation_order is not sequential")
+    if [float(frame["timestamp"]) for frame in frames] != sorted(float(frame["timestamp"]) for frame in frames):
+        raise ValueError("Task6->Task7A visual frames are not chronological")
 
 
 def _quoted_phrases(cues: dict[str, Any]) -> list[str]:
@@ -103,17 +129,27 @@ def _visual_packet(record: dict[str, Any], candidates: list[dict[str, Any]], con
 def _groups(record: dict[str, Any], candidates: list[dict[str, Any]], relations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     operation = record["task5a_plan_summary"]["answer_requirement"]["operation"]
     if operation == "measure_delay":
-        members = [item for item in candidates if any(role in item["roles"] for role in ("trigger", "plausible_response"))]
+        role_members = [item for item in candidates if any(role in item["roles"] for role in ("trigger", "plausible_response"))]
         group_type, reason = "trigger_response", "Preserves the trigger and plausible response alternatives without selecting a speaker or response as correct."
     elif any("resolver" in item["roles"] for item in candidates):
-        members = [item for item in candidates if any(role in item["roles"] for role in ("temporal_anchor", "resolver"))]
+        role_members = [item for item in candidates if any(role in item["roles"] for role in ("temporal_anchor", "resolver"))]
         group_type, reason = "anchor_resolver", "Combines a temporal anchor with visual resolver evidence without inferring an answer."
     else:
-        members = list(candidates)
-        group_type = "fallback_recovery" if any("fallback_recovered" in item["roles"] for item in members) else "single_modality_evidence"
+        role_members = list(candidates)
+        group_type = "fallback_recovery" if any("fallback_recovered" in item["roles"] for item in role_members) else "single_modality_evidence"
         reason = "Retains compact direct evidence; it is explicitly a single-modality group when no cross-modal relation is present."
+
+    # Group type remains operation-shaped, but group membership is the complete
+    # Task6-retained set. Previously, role-based grouping silently orphaned
+    # already-retained entities (for example when a measure_delay plan retained
+    # resolver evidence). This does not select or drop evidence.
+    role_ids = {item["candidate_id"] for item in role_members}
+    contract_members = [item for item in candidates if item["candidate_id"] not in role_ids]
+    members = role_members + contract_members
+    if contract_members:
+        reason += " Additional Task6-retained entities are included to satisfy the model-facing serialization contract."
     ids = {item["candidate_id"] for item in members}
-    return [{"group_id": stable_id("group", record["case_id"], group_type), "operation": operation, "group_type": group_type, "primary_anchor": next((item["candidate_id"] for item in members if "trigger" in item["roles"] or "temporal_anchor" in item["roles"] or "fallback_recovered" in item["roles"]), None), "retained_candidates": members, "relations": [item for item in relations if item["source_candidate_id"] in ids or item["target_candidate_id"] in ids], "unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "missing_information": [], "why_this_group_is_needed": reason}]
+    return [{"group_id": stable_id("group", record["case_id"], group_type), "operation": operation, "group_type": group_type, "primary_anchor": next((item["candidate_id"] for item in members if "trigger" in item["roles"] or "temporal_anchor" in item["roles"] or "fallback_recovered" in item["roles"]), None), "retained_candidates": members, "relations": [item for item in relations if item["source_candidate_id"] in ids and item["target_candidate_id"] in ids], "role_selected_candidate_ids": [item["candidate_id"] for item in role_members], "contract_added_candidate_ids": [item["candidate_id"] for item in contract_members], "unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "missing_information": [], "why_this_group_is_needed": reason}]
 
 
 def build_evidence_packet(state: CaseState, config: dict[str, Any]) -> CaseState:
@@ -144,7 +180,10 @@ def build_evidence_packet(state: CaseState, config: dict[str, Any]) -> CaseState
     initial_groups = _groups(record, retained, initial_relations)
     base = {"case_id": state.case_id, "question": state.question, "operation": record["task5a_plan_summary"]["answer_requirement"]["operation"], "required_modalities": record["task5a_plan_summary"]["resolver_modalities"], "required_evidence_modalities": required_modalities, "required_roles": required_roles, "candidates_before_reranking": before, "retained_evidence_groups": initial_groups, "retained_candidates": retained, "dropped_candidates": visual_drops + supporting_drops + budget_drops, "candidate_drop_reasons": visual_drops + supporting_drops + budget_drops, "relations": initial_relations, "selected_visual_frames": selected_frames, "local_audio_clips": copy.deepcopy(record.get("local_audio_clips", [])), "speech_segments": [item for item in retained if item.get("modality") == "speech"], "unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "source_unresolved_ambiguities": copy.deepcopy(record["ambiguity_flags"]), "missing_information": [], "structural_evidence_status": record["evidence_status"], "questionable_followup_policy": record["questionable_followup_policy"], "dataset_or_query_inconsistency_status": "unknown", "budget_accounting": budget, "provenance": {"task5a_plan": copy.deepcopy(record["task5a_plan_summary"]), "task5c_v1_2_acoustic_diagnostics": copy.deepcopy(record.get("acoustic_evidence_diagnostics", [])), "fallback_history": copy.deepcopy(record.get("source_task5c_v1_1", {}))}}
     accounting = classify_candidate_accounting(base)
-    frames = chronological_frames(base["selected_visual_frames"])
+    # Frozen Task 6 v1.1 assigned selection priority before chronological
+    # presentation; v1.2 then serialized that same retained set by timestamp.
+    # These are deliberately separate semantics.
+    frames = chronological_frames(order_visual_frames(base["selected_visual_frames"], retained))
     for candidate in retained:
         if candidate.get("candidate_type") == "canonical_visual_evidence":
             candidate["canonical_visual_frames"] = copy.deepcopy(frames)
@@ -156,6 +195,10 @@ def build_evidence_packet(state: CaseState, config: dict[str, Any]) -> CaseState
     rerank_started = time.perf_counter()
     relations = corrected_relations(retained, base["operation"], initial_relations)
     relations = correct_response_relations(relations, emit_trigger_of=True)
+    relations, relation_contract_audit = stabilize_relations(
+        relations,
+        (item["candidate_id"] for item in retained),
+    )
     base.pop("required_modalities")
     base.pop("required_evidence_modalities")
     base.update(modalities)
@@ -163,10 +206,21 @@ def build_evidence_packet(state: CaseState, config: dict[str, Any]) -> CaseState
     base["selected_visual_frames"] = frames
     base["relations"] = relations
     base["retained_evidence_groups"] = _groups(record, retained, relations)
+    base["intentionally_non_model_facing_candidates"] = []
+    base["relation_contract_audit"] = relation_contract_audit
     base["budget_accounting"] = corrected_budget_accounting(base["budget_accounting"], base["actually_dropped_candidates"])
-    base["consistency_checks"] = {"dropped_candidate_count_matches_actually_dropped": base["budget_accounting"]["dropped_candidate_count"] == len(base["actually_dropped_candidates"]), "candidate_count_equation": candidate_count_consistent(base)}
+    identity_accounting = candidate_identity_accounting(base)
+    base["candidate_identity_accounting"] = identity_accounting
+    base["consistency_checks"] = {
+        "dropped_candidate_count_matches_actually_dropped": base["budget_accounting"]["dropped_candidate_count"] == len(base["actually_dropped_candidates"]),
+        "candidate_count_equation": candidate_count_consistent(base),
+        "candidate_identity_sets_reconcile": identity_accounting["consistent"],
+        "retained_and_dropped_disjoint": not identity_accounting["retained_and_dropped_intersection"],
+    }
     if not all(base["consistency_checks"].values()):
         raise RuntimeError(f"Canonical Task 6 accounting inconsistency: {state.case_id}")
+    validate_visual_frame_contract(base)
+    base["evidence_contract_audit"] = validate_packet_contract(base)
     relation_reranking_sec = time.perf_counter() - rerank_started
     state.evidence_packet = base
     total_sec = time.perf_counter() - total_started

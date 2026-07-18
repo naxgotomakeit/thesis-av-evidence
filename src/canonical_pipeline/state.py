@@ -21,6 +21,8 @@ class CaseState:
     question: str
     video_duration_sec: float
     mode: ExecutionMode
+    source_video_path: str | None = None
+    source_audio_path: str | None = None
     planner_output: dict[str, Any] | None = None
     deterministic_cues: dict[str, Any] = field(default_factory=dict)
     retrieval_result: dict[str, Any] | None = None
@@ -40,4 +42,3 @@ class CaseState:
 
     def record(self, stage: str, detail: str, **values: Any) -> None:
         self.audit.append({"stage": stage, "detail": detail, **values})
-

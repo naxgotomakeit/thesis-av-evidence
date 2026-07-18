@@ -11,7 +11,7 @@ per-question online path:
 ```text
 offline reusable multimodal indexing
   -> question planning
-  -> modality-aware retrieval
+  -> fresh question-conditioned query encoding and modality-aware retrieval
   -> local refinement
   -> evidence sufficiency / conditional fallback
   -> relation-aware reranking
@@ -34,6 +34,16 @@ Historical Task scripts remain intact as the research-development lineage and
 are imported where their validated helpers are canonical dependencies. The
 `src/canonical_pipeline/` package is the separate executable baseline; it does
 not execute historical correction versions as sequential runtime stages.
+The generalized runner accepts an explicit case manifest and scores reusable
+offline visual, transcript, and acoustic indexes directly. Historical Task 4
+per-question score files are retained only for regression comparison, never as
+a prerequisite for a new question. Selected acoustic intervals are materialized
+to local WAV evidence on demand using the final Task 5C v1.2 behavior.
+Technical producer/consumer validation additionally enforces complete evidence
+group membership, relation endpoint closure and uniqueness, globally unique
+model-facing evidence IDs, per-video index compatibility, and an exact Task7A
+to Task7B v3 schema contract. These checks stabilize serialization and
+reproducibility; they do not change evidence ranking or selection policy.
 
 ## Setup
 

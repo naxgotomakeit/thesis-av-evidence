@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from src.retrieval.task5c_v1_1 import classify_v1_1, visual_accounting
@@ -19,6 +20,7 @@ from src.retrieval.task5c_v1_2 import (
 )
 
 from .state import CaseState, ExecutionMode
+from .media_materialization import materialize_required_acoustic_clips
 
 
 FallbackExecutor = Callable[[CaseState, dict[str, Any]], dict[str, Any]]
@@ -60,6 +62,8 @@ def run_evidence_sufficiency(
     *,
     frozen_v1_2: dict[str, Any] | None = None,
     fallback_executor: FallbackExecutor | None = None,
+    materialization_root: Path | None = None,
+    project_root: Path | None = None,
 ) -> CaseState:
     """Classify once and execute at most one fallback before final v1.2 status."""
     if state.retrieval_result is None or state.planner_output is None:
@@ -91,6 +95,24 @@ def run_evidence_sufficiency(
             fallback_duration = time.perf_counter() - fallback_started
             state.external_calls["fallback"] += int(fallback.get("model_calls", 0))
     post_candidates = pre_candidates + copy.deepcopy(fallback.get("added_candidates", []))
+    clips = copy.deepcopy((frozen_v1_2 or {}).get("local_audio_clips", []))
+    materialization_warnings: list[str] = []
+    materialization_sec: float | None = None
+    if state.mode is ExecutionMode.EXECUTE_LIVE:
+        if materialization_root is None:
+            raise ValueError("Live Task 5C v1.2 requires an isolated materialization root")
+        if project_root is None:
+            raise ValueError("Live Task 5C v1.2 materialization requires the project root")
+        role = acoustic_evidence_role(state.planner_output)
+        acoustic_required = role in {"direct_evidence", "temporal_anchor", "resolver"} and any(item.get("modality") == "acoustic" for item in post_candidates)
+        if acoustic_required and not state.source_audio_path:
+            raise FileNotFoundError("Selected acoustic evidence requires a source WAV path")
+        if acoustic_required:
+            clips, materialization_warnings, materialization_sec = materialize_required_acoustic_clips(
+                post_candidates, case_id=state.case_id, source_audio=Path(state.source_audio_path),
+                output_root=materialization_root, role=role,
+                project_root=project_root,
+            )
     post_started = time.perf_counter()
     post, _ = classify_v1_1(context, state.planner_output, state.deterministic_cues, post_candidates)
     diagnostics = _diagnostics(state, post_candidates, frozen_v1_2 if state.mode is ExecutionMode.REGRESSION_REPLAY else None)
@@ -123,7 +145,8 @@ def run_evidence_sufficiency(
         "questionable_followup_policy": "deferred_to_future_ablation",
         "automatic_additional_fallback_triggered": False,
         "acoustic_evidence_diagnostics": diagnostics,
-        "local_audio_clips": copy.deepcopy((frozen_v1_2 or {}).get("local_audio_clips", [])),
+        "local_audio_clips": clips,
+        "local_audio_materialization_warnings": materialization_warnings,
         "visual_efficiency_accounting": visual_accounting(task5b_summary),
     }
     state.sufficiency_result = result
@@ -139,6 +162,8 @@ def run_evidence_sufficiency(
         ),
         "post_fallback_processing_sec": post_duration,
         "fallback_model_calls": int(fallback.get("model_calls", 0)),
+        "local_audio_materialization_sec": materialization_sec,
+        "local_audio_clip_count": len(clips),
     }
     state.record("evidence_sufficiency", "task5c_v1_2_direct_final_behavior", fallback_execution_count=state.fallback_execution_count)
     return state

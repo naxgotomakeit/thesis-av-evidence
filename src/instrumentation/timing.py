@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterator
@@ -118,20 +119,39 @@ def blocked_online_timings(reason: str = "blocked_no_clean_online_replay") -> li
 
 
 def timing_consistency(records: list[dict[str, Any]], non_overlapping_top_level: list[str]) -> dict[str, Any]:
-    by_name = {record["stage_name"]: record for record in records}
-    online = by_name.get("online_end_to_end_total", {})
+    # A list is intentional: repeated executions are real records and must not
+    # be silently overwritten by a stage-name dictionary.
+    by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        by_name[record["stage_name"]].append(record)
+    online_records = by_name.get("online_end_to_end_total", [])
+    online = online_records[0] if len(online_records) == 1 else {}
     online_duration = online.get("duration_sec") if online.get("executed") else None
-    measured = [by_name[name]["duration_sec"] for name in non_overlapping_top_level if name in by_name and by_name[name].get("executed") and by_name[name].get("duration_sec") is not None]
+    measured = [
+        float(record["duration_sec"])
+        for name in non_overlapping_top_level
+        for record in by_name.get(name, [])
+        if record.get("executed") and record.get("duration_sec") is not None
+    ]
     top_sum = sum(measured)
     overhead = None if online_duration is None else online_duration - top_sum
     percent = None if online_duration in (None, 0) else overhead / online_duration * 100.0
     child_ok = True if online_duration is None else all(record.get("duration_sec", 0) <= online_duration + 1e-9 for record in records if record.get("executed") and record["stage_name"] != "online_end_to_end_total")
+    duplicate_counts = {
+        name: count
+        for name, count in Counter(record["stage_name"] for record in records).items()
+        if count > 1
+    }
+    duplicate_online_total = len(online_records) != 1
     return {
         "online_end_to_end_duration_sec": online_duration,
         "non_overlapping_top_level_duration_sum_sec": top_sum if measured else None,
         "uninstrumented_overhead_sec": overhead,
         "uninstrumented_overhead_percentage": percent,
         "online_total_greater_than_or_equal_to_each_stage": child_ok,
+        "duplicate_stage_name_counts": duplicate_counts,
+        "online_total_record_count": len(online_records),
         "double_counting_avoided": True,
-        "consistency_status": "not_evaluable_online_replay_blocked" if online_duration is None else ("valid" if child_ok and overhead is not None and overhead >= -1e-6 else "invalid"),
+        "nested_stage_durations_are_not_additive": True,
+        "consistency_status": "not_evaluable_online_replay_blocked" if online_duration is None and not duplicate_online_total else ("valid" if child_ok and not duplicate_online_total and overhead is not None and overhead >= -1e-6 else "invalid"),
     }

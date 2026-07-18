@@ -7,6 +7,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .canonical_schema import canonical_output_schema
+
 
 ANSWER_STATUSES = ["answered", "answered_with_uncertainty", "insufficient_evidence", "query_or_premise_inconsistent"]
 
@@ -30,16 +32,9 @@ FINAL_ANSWER_POLICY = {
     ],
 }
 
-REQUIRED_OUTPUT_SCHEMA = {
-    "answer_status": "answered | answered_with_uncertainty | insufficient_evidence | query_or_premise_inconsistent",
-    "answer": "string or null",
-    "reasoning_summary": "brief evidence-grounded explanation",
-    "evidence_used": [{"evidence_id": "...", "modality": "visual | speech | acoustic", "start_sec": 0.0, "end_sec": 0.0, "supported_claim": "..."}],
-    "uncertainties": [{"type": "...", "description": "...", "affected_claim": "...", "severity": "minor | material | critical", "source": "pipeline | final_model", "resolvable_with": "string or null"}],
-    "missing_information": [],
-    "confidence": {"level": "high | medium | low", "basis": "evidence-grounded explanation"},
-    "abstain": False,
-}
+# Task7A embeds the exact provider schema used by canonical Task7B v3.  This is
+# a serialization contract only; it does not change the final answer policy.
+REQUIRED_OUTPUT_SCHEMA = canonical_output_schema()
 
 FORBIDDEN_FIELD_FRAGMENTS = (
     "ground_truth", "weak_reference", "reference_interval", "posthoc_evaluation",

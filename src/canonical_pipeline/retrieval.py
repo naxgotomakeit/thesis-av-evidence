@@ -9,12 +9,19 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from scripts.run_task5b_retrieval import build_case
 from src.retrieval.task5b import canonical_visual_frames, package_micro_frames
 
 from .state import CaseState
+from .query_scoring import QueryScoreResult
+
+
+class QueryScorer(Protocol):
+    """Boundary for fresh local question-conditioned modality scoring."""
+
+    def score_case(self, case: dict[str, Any], modalities: list[str]) -> dict[str, QueryScoreResult]: ...
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -70,8 +77,13 @@ def _apply_v1_1_visual_packaging(base: dict[str, Any], project_root: Path) -> di
     return result
 
 
-def run_planner_guided_retrieval(state: CaseState, project_root: Path) -> CaseState:
-    """Run final Task 5B v1.1 behavior from reusable offline indexes."""
+def run_planner_guided_retrieval(state: CaseState, project_root: Path, query_scorer: QueryScorer | None = None, runtime_output_root: Path | None = None) -> CaseState:
+    """Run Task 5B v1.1, optionally using fresh Task 4-lineage scores.
+
+    Regression replay deliberately retains the historical reference path.
+    Generalized live execution supplies ``query_scorer`` and never reads an
+    old per-question Task 4 score artifact.
+    """
     if state.planner_output is None:
         raise ValueError("Planner output is required before retrieval")
     planner_record = {
@@ -81,7 +93,57 @@ def run_planner_guided_retrieval(state: CaseState, project_root: Path) -> CaseSt
         "deterministic_cues": state.deterministic_cues,
     }
     safe_manifest = {"video_id": state.video_id, "video_duration": state.video_duration_sec}
-    base = build_case(planner_record, safe_manifest, acoustic_query=None, acoustic_query_time=0.0)
+    score_results: dict[str, QueryScoreResult] = {}
+    if query_scorer is not None:
+        requested = list(dict.fromkeys(
+            [item for item in state.planner_output.get("resolver_modalities", []) if item in {"visual", "speech", "acoustic"}]
+            + ([state.planner_output.get("primary_anchor_modality")] if state.planner_output.get("primary_anchor_modality") in {"visual", "speech", "acoustic"} else [])
+        ))
+        score_results = query_scorer.score_case(
+            {"case_id": state.case_id, "video_id": state.video_id, "question": state.question}, requested,
+        )
+    score_maps: dict[str, dict[str, dict[str, Any]]] = {}
+    for modality, result in score_results.items():
+        # Historical Task 5B read only Task 4's Top-3 speech score file, while
+        # its acoustic online path scored every acoustic row. Preserve that
+        # exact distinction. Visual scores annotate coarse retrieval/anchors.
+        rows = result.top_k_results if modality == "speech" else result.ranked_results
+        id_key = {"visual": "region_id", "speech": "transcript_segment_id", "acoustic": "acoustic_region_id"}[modality]
+        score_maps[modality] = {str(item[id_key]): copy.deepcopy(item) for item in rows}
+    acoustic_result = score_results.get("acoustic")
+    base = build_case(
+        planner_record, safe_manifest,
+        acoustic_query=acoustic_result.query_vector if acoustic_result else None,
+        acoustic_query_time=acoustic_result.query_encode_sec if acoustic_result else 0.0,
+        fresh_score_maps=score_maps, allow_historical_score_files=query_scorer is None,
+        source_video_path=Path(state.source_video_path) if state.source_video_path else None,
+        local_visual_output_root=runtime_output_root / "local_visual" if runtime_output_root else None,
+    )
+    if score_results:
+        audits = {modality: result.audit_dict() for modality, result in score_results.items()}
+        base["question_conditioned_scoring"] = {
+            "execution_mode": "fresh_online",
+            "historical_task4_score_files_used": False,
+            "modalities": audits,
+        }
+        base["runtime"]["query_scoring"] = {
+            modality: {
+                "encoder_model_load_sec": result.model_load_sec,
+                "query_encode_sec": result.query_encode_sec,
+                "similarity_search_sec": result.similarity_search_sec,
+            }
+            for modality, result in score_results.items()
+        }
+        base["runtime"]["new_embedding_computations"] += len(score_results)
+        base["runtime"]["new_embedding_computation_time_sec"] += sum(result.query_encode_sec for result in score_results.values())
+        base["runtime"]["reused_retrieval_score_files"] = []
+        base["warnings"] = [warning for warning in base["warnings"] if not warning.startswith("missing_input: outputs/retrieval/")]
+    else:
+        base["question_conditioned_scoring"] = {
+            "execution_mode": "historical_regression_reference",
+            "historical_task4_score_files_used": True,
+            "modalities": {},
+        }
     state.retrieval_result = _apply_v1_1_visual_packaging(base, project_root)
-    state.record("planner_guided_retrieval", "task5b_v1_1_completed", offline_indexes_reused=True)
+    state.record("planner_guided_retrieval", "task5b_v1_1_completed", offline_indexes_reused=True, fresh_question_scores=bool(score_results), historical_task4_score_dependency=not bool(score_results))
     return state

@@ -85,6 +85,8 @@ class LazyWhisperFallback:
         self.model_name = str(config.get("whisper_model", FALLBACK_MODEL))
         self.device = "not_loaded"
         self.model_load_latency_sec = 0.0
+        self.model_load_count = 0
+        self.fallback_calls = 0
         self._transcriber: Callable[[Any, int], dict[str, Any]] | None = None
 
     def _get(self) -> Callable[[Any, int], dict[str, Any]]:
@@ -102,6 +104,7 @@ class LazyWhisperFallback:
             download_root=str(self.config.get("whisper_cache_dir", "")) or None,
         )
         self.model_load_latency_sec = time.perf_counter() - started
+        self.model_load_count += 1
 
         def transcribe(audio: Any, sample_rate: int) -> dict[str, Any]:
             if sample_rate != 16000:
@@ -129,6 +132,7 @@ class LazyWhisperFallback:
     def execute(self, state: CaseState, context: dict[str, Any]) -> dict[str, Any]:
         """Execute one final-policy fallback; no frozen evidence is accepted."""
         del context
+        self.fallback_calls += 1
         hard, decode = _explicit_or_search_interval(state)
         phrases = [str(item["text"]) for item in state.deterministic_cues.get("quoted_phrases", []) if item.get("text")]
         source = self._source_audio(state.video_id)
@@ -150,3 +154,14 @@ class LazyWhisperFallback:
         result["canonical_execution"] = "live_fallback_executed_once"
         return result
 
+    def lifecycle_audit(self) -> dict[str, Any]:
+        """Report lazy Whisper lifecycle without exposing model internals."""
+        return {
+            "model": self.model_name,
+            "device": self.device,
+            "load_count": self.model_load_count,
+            "fallback_calls": self.fallback_calls,
+            "model_load_latency_sec": self.model_load_latency_sec if self.model_load_count else None,
+            "currently_loaded": self._transcriber is not None,
+            "persistent_reuse_invariant": self.model_load_count <= 1,
+        }

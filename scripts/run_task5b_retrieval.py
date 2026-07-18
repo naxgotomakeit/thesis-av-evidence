@@ -53,11 +53,14 @@ def encode_acoustic_questions(plan_rows:list[dict])->tuple[dict[str,np.ndarray],
     if torch.cuda.is_available():torch.cuda.empty_cache()
     return vectors,timings,{"model_load_time_sec":load_time,"device":device,"model":name,"revision":revision}
 
-def build_case(row:dict,manifest_safe:dict,acoustic_query:np.ndarray|None=None,acoustic_query_time:float=0.0)->dict:
+def build_case(row:dict,manifest_safe:dict,acoustic_query:np.ndarray|None=None,acoustic_query_time:float=0.0,*,fresh_score_maps:dict[str,dict[str,dict]]|None=None,allow_historical_score_files:bool=True,source_video_path:Path|None=None,local_visual_output_root:Path|None=None)->dict:
     started=time.perf_counter(); case_id=row["case_id"]; question=row["raw_question"]; plan=copy.deepcopy(row["plan"]); cues=copy.deepcopy(row["deterministic_cues"]); video_id=manifest_safe["video_id"]; duration=float(manifest_safe["video_duration"])
     visual_dir=ROOT/"outputs/visual_index"/video_id; micro_dir=ROOT/"outputs/visual_micro_index"/video_id; audio_dir=ROOT/"outputs/audio_index"/video_id; baseline_dir=ROOT/"outputs/retrieval"/case_id
-    files={"task5a_v2":rel(PLAN_PATH),"coarse_visual_index":rel(visual_dir/"visual_state_regions.json"),"coarse_visual_embeddings":rel(visual_dir/"region_embeddings.npy"),"speech_transcripts":rel(audio_dir/"transcripts.json"),"speech_embedding_index":rel(audio_dir/"transcript_embedding_index.json"),"acoustic_index":rel(audio_dir/"acoustic_embedding_index.json"),"acoustic_embeddings":rel(audio_dir/"acoustic_embeddings.npy"),"visual_micro_index":rel(micro_dir/"microclip_index.json"),"task4_visual_scores":rel(baseline_dir/"visual_retrieval.json"),"task4_speech_scores":rel(baseline_dir/"speech_retrieval.json"),"task4_acoustic_scores":rel(baseline_dir/"acoustic_retrieval.json"),"source_mp4":str(MEDIA_ROOT/f"{video_id}.mp4")}
-    missing=[path for key,value in files.items() if key not in {"task5a_v2","source_mp4"} and not (ROOT/value).is_file()]
+    video_source=source_video_path or MEDIA_ROOT/f"{video_id}.mp4"
+    files={"task5a_v2":rel(PLAN_PATH),"coarse_visual_index":rel(visual_dir/"visual_state_regions.json"),"coarse_visual_embeddings":rel(visual_dir/"region_embeddings.npy"),"speech_transcripts":rel(audio_dir/"transcripts.json"),"speech_embedding_index":rel(audio_dir/"transcript_embedding_index.json"),"acoustic_index":rel(audio_dir/"acoustic_embedding_index.json"),"acoustic_embeddings":rel(audio_dir/"acoustic_embeddings.npy"),"visual_micro_index":rel(micro_dir/"microclip_index.json"),"task4_visual_scores":rel(baseline_dir/"visual_retrieval.json"),"task4_speech_scores":rel(baseline_dir/"speech_retrieval.json"),"task4_acoustic_scores":rel(baseline_dir/"acoustic_retrieval.json"),"source_mp4":str(video_source)}
+    fresh_score_maps=fresh_score_maps or {}
+    score_keys={"task4_visual_scores","task4_speech_scores","task4_acoustic_scores"}
+    missing=[path for key,value in files.items() if key not in {"task5a_v2","source_mp4"} and not (key in score_keys and not allow_historical_score_files) and not (ROOT/value).is_file()]
     warnings=["missing_input: "+x for x in missing]
     anchor=resolve_question_intervals(question,cues,plan["temporal_relation"],duration); trace=list(anchor.pop("routing_trace")); methods=[]
     if anchor["raw_question_intervals"]: methods.append("explicit_question_time_hard_constraint")
@@ -80,11 +83,12 @@ def build_case(row:dict,manifest_safe:dict,acoustic_query:np.ndarray|None=None,a
     search=anchor["final_search_intervals"]
     executed,skipped=modalities_to_execute(plan); reasons={m:("required by Task 5A resolver_modalities" if m in plan["resolver_modalities"] else "recorded fallback") for m in executed}
     trace.extend([{"event":"modality_executed","modality":m,"reason":reasons[m]} for m in executed]); trace.extend([{"event":"modality_skipped",**x} for x in skipped])
-    runtime={"task5b_llm_api_calls":0,"visual_index_calls":0,"speech_index_calls":0,"acoustic_index_calls":0,"local_video_reads":0,"latency_sec":0.0,"branch_latency_sec":{"visual":0.0,"speech":0.0,"acoustic":0.0},"branch_local_model_calls":{"visual":0,"speech":0,"acoustic":0},"new_embedding_computations":0,"new_embedding_computation_time_sec":0.0,"reused_embedding_files":[],"reused_retrieval_score_files":[],"reused_index_metadata_files":[]}
+    runtime={"task5b_llm_api_calls":0,"visual_index_calls":0,"speech_index_calls":0,"acoustic_index_calls":0,"local_video_reads":0,"latency_sec":0.0,"branch_latency_sec":{"visual":0.0,"speech":0.0,"acoustic":0.0},"branch_local_model_calls":{"visual":0,"speech":0,"acoustic":0},"local_visual_refinement_sec":None,"temporal_linking_sec":0.0,"budget_selection_sec":0.0,"new_embedding_computations":0,"new_embedding_computation_time_sec":0.0,"reused_embedding_files":[],"reused_retrieval_score_files":[],"reused_index_metadata_files":[]}
     speech=[]; acoustic=[]; coarse=[]; micro=[]; dense=[]; acoustic_anchors=[]; visual_anchors=[]
     if "speech" in executed:
         t=time.perf_counter(); runtime["speech_index_calls"]+=1; speech_score={}
-        if (baseline_dir/"speech_retrieval.json").is_file(): speech_score=score_map(load(baseline_dir/"speech_retrieval.json")["results"],"transcript_segment_id");runtime["reused_retrieval_score_files"].append(files["task4_speech_scores"])
+        if "speech" in fresh_score_maps: speech_score=fresh_score_maps["speech"]
+        elif allow_historical_score_files and (baseline_dir/"speech_retrieval.json").is_file(): speech_score=score_map(load(baseline_dir/"speech_retrieval.json")["results"],"transcript_segment_id");runtime["reused_retrieval_score_files"].append(files["task4_speech_scores"])
         pool=[]
         if plan["answer_requirement"]["operation"]=="count_occurrences":
             pool=phrase_matches
@@ -112,9 +116,11 @@ def build_case(row:dict,manifest_safe:dict,acoustic_query:np.ndarray|None=None,a
         if plan["answer_requirement"]["operation"]=="count_occurrences" and not speech: warnings.append("no_plausible_ASR_phrase_occurrence_in_requested_interval")
     if "acoustic" in executed:
         t=time.perf_counter(); runtime["acoustic_index_calls"]+=1; rows=load(audio_dir/"acoustic_embedding_index.json").get("rows",[]) if (audio_dir/"acoustic_embedding_index.json").is_file() else []; amap={}
-        if acoustic_query is not None:
+        if "acoustic" in fresh_score_maps:
+            amap=fresh_score_maps["acoustic"]
+        elif acoustic_query is not None:
             matrix=np.load(audio_dir/"acoustic_embeddings.npy");matrix=matrix/np.maximum(np.linalg.norm(matrix,axis=1,keepdims=True),1e-12);scores=matrix@acoustic_query;amap={source["acoustic_region_id"]:{"similarity_score":float(scores[i])} for i,source in enumerate(rows)};runtime["new_embedding_computations"]+=1;runtime["new_embedding_computation_time_sec"]+=acoustic_query_time;runtime["branch_local_model_calls"]["acoustic"]+=1;runtime["reused_embedding_files"].append(files["acoustic_embeddings"])
-        elif (baseline_dir/"acoustic_retrieval.json").is_file(): amap=score_map(load(baseline_dir/"acoustic_retrieval.json")["results"],"acoustic_region_id");runtime["reused_retrieval_score_files"].append(files["task4_acoustic_scores"])
+        elif allow_historical_score_files and (baseline_dir/"acoustic_retrieval.json").is_file(): amap=score_map(load(baseline_dir/"acoustic_retrieval.json")["results"],"acoustic_region_id");runtime["reused_retrieval_score_files"].append(files["task4_acoustic_scores"])
         runtime["reused_index_metadata_files"].append(files["acoustic_index"])
         for source in rows:
             item=clip_candidate(source,search)
@@ -131,11 +137,13 @@ def build_case(row:dict,manifest_safe:dict,acoustic_query:np.ndarray|None=None,a
         for source in regions:
             item=clip_candidate(source,search)
             if not item:continue
-            coarse.append({"candidate_id":stable_id("coarse",video_id,source["region_id"]),"candidate_type":"coarse_visual_region","modality":"visual","region_id":source["region_id"],"start_time":item["start_time"],"end_time":item["end_time"],"source_start_time":source["start_time"],"source_end_time":source["end_time"],"representative_keyframe_path":rel(visual_dir/source["representative_keyframe_path"]),"anchor_distance_sec":0.0,"hard_timestamp_consistent":True,"source_index":files["coarse_visual_index"],"warnings":["coarse_region_is_localization_context_not_complete_evidence"]})
+            visual_score=fresh_score_maps.get("visual",{}).get(str(source["region_id"]),{})
+            coarse.append({"candidate_id":stable_id("coarse",video_id,source["region_id"]),"candidate_type":"coarse_visual_region","modality":"visual","region_id":source["region_id"],"start_time":item["start_time"],"end_time":item["end_time"],"source_start_time":source["start_time"],"source_end_time":source["end_time"],"representative_keyframe_path":rel(visual_dir/source["representative_keyframe_path"]),"similarity_score":visual_score.get("similarity_score"),"query_rank":visual_score.get("rank"),"anchor_distance_sec":0.0,"hard_timestamp_consistent":True,"source_index":files["coarse_visual_index"],"warnings":["coarse_region_is_localization_context_not_complete_evidence"]})
         if not coarse:
             nearest=min(regions,key=lambda x:nearest_distance(x,search)); coarse.append({"candidate_id":stable_id("coarse",video_id,nearest["region_id"]),"candidate_type":"coarse_visual_region","modality":"visual","region_id":nearest["region_id"],"start_time":nearest["start_time"],"end_time":nearest["end_time"],"source_start_time":nearest["start_time"],"source_end_time":nearest["end_time"],"representative_keyframe_path":rel(visual_dir/nearest["representative_keyframe_path"]),"anchor_distance_sec":nearest_distance(nearest,search),"hard_timestamp_consistent":False,"source_index":files["coarse_visual_index"],"warnings":["nearest_coarse_region_used_no_overlap"]})
-        if plan["primary_anchor_modality"]=="visual" or (not hard and not phrase_matches and plan["visual_route"] in {"global_visual_fallback","coarse_event_retrieval"}): visual_anchors=copy.deepcopy(coarse[:3]); methods.append("coarse_visual_anchor_retrieval")
+        if plan["primary_anchor_modality"]=="visual" or (not hard and not phrase_matches and plan["visual_route"] in {"global_visual_fallback","coarse_event_retrieval"}): visual_anchors=copy.deepcopy(sorted(coarse,key=lambda x:(x.get("query_rank") if x.get("query_rank") is not None else 10**9,x["start_time"],x["region_id"]))[:3]); methods.append("coarse_visual_anchor_retrieval")
         if local_required:
+            refinement_started=time.perf_counter()
             local.update({"executed":True,"reason":"Task 5A requires_local_visual_inspection=true; coarse-to-fine route executed","coarse_regions_used":[{"region_id":x["region_id"],"keyframe":x["representative_keyframe_path"]} for x in coarse]})
             mdata=load(micro_dir/"microclip_index.json"); runtime["reused_index_metadata_files"].append(files["visual_micro_index"]); candidates=[]
             for source in mdata["microclips"]:
@@ -146,16 +154,21 @@ def build_case(row:dict,manifest_safe:dict,acoustic_query:np.ndarray|None=None,a
                 provenance=[x["region_id"] for x in coarse if overlap_seconds(x["source_start_time"],x["source_end_time"],source["start_time"],source["end_time"])>0]
                 micro.append({"candidate_id":stable_id("micro",video_id,source["microclip_id"]),"candidate_type":"micro_window","modality":"visual","microclip_id":source["microclip_id"],"start_time":item["start_time"],"end_time":item["end_time"],"source_start_time":source["start_time"],"source_end_time":source["end_time"],"frame_paths":source["frame_paths"],"representative_frame_path":source["representative_frame_path"],"motion_magnitude":source["motion_magnitude"],"coarse_region_provenance":provenance,"anchor_distance_sec":0.0,"hard_timestamp_consistent":True,"source_index":files["visual_micro_index"],"warnings":["micro_window_is_detailed_candidate_not_event_label"]})
             local["micro_windows"]=copy.deepcopy(micro)
-            local_start=min(x["start_sec"] for x in search); local_end=max(x["end_sec"] for x in search); video=MEDIA_ROOT/f"{video_id}.mp4"
+            local_start=min(x["start_sec"] for x in search); local_end=max(x["end_sec"] for x in search); video=video_source
             if video.is_file() and FFMPEG.is_file():
-                dense,error=extract_dense_frames(video,OUT/"local_visual"/case_id,local_start,local_end); runtime["local_video_reads"]+=1; local["original_video_duration_read_sec"]=local_end-local_start
+                dense,error=extract_dense_frames(video,(local_visual_output_root or OUT/"local_visual")/case_id,local_start,local_end); runtime["local_video_reads"]+=1; local["original_video_duration_read_sec"]=local_end-local_start
                 if error:warnings.append(error)
             else:warnings.append("source_mp4_or_ffmpeg_missing_local_dense_refinement_failed")
             local["dense_frames"]=dense
+            runtime["local_visual_refinement_sec"]=time.perf_counter()-refinement_started
         runtime["branch_latency_sec"]["visual"]=time.perf_counter()-t
     all_candidates=speech+acoustic+micro
+    linking_started=time.perf_counter()
     linked=link_candidates(all_candidates,anchor["executed_relation"])
+    runtime["temporal_linking_sec"]=time.perf_counter()-linking_started
+    budget_started=time.perf_counter()
     selected,budget=apply_budget(all_candidates,plan["answer_requirement"]["operation"])
+    runtime["budget_selection_sec"]=time.perf_counter()-budget_started
     selected_duration=union_duration(selected); selected_frames=len({p for x in selected if x["modality"]=="visual" for p in x.get("frame_paths",[])})+len(dense if any(x["modality"]=="visual" for x in selected) else [])
     selected_clips=sum(x.get("candidate_type")=="micro_window" for x in selected)
     anchor.update({"methods":methods,"transcript_matches":phrase_matches,"acoustic_anchor_candidates":acoustic_anchors,"visual_anchor_candidates":visual_anchors,"confidence":1.0 if anchor["raw_question_intervals"] else (.85 if anchor["deterministic_interpretations"] or phrase_matches else .4),"warnings":[]})

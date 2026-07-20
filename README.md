@@ -3,6 +3,46 @@
 Research code for efficient audio-visual evidence selection for egocentric
 long-video question answering.
 
+## Current research goal
+
+Training-free, API-efficient long egocentric video QA using a reusable
+hierarchical audio-visual evidence map. On `dev/thesis-av`, visual-only v1 is
+implemented; audio integration is the next stage.
+
+## Selected visual architecture
+
+`Video -> Fine -> Safe-Merge hierarchy -> Fluid Loose Medium -> keyframe -> Medium
+semantic caption -> deterministic Semantic Coarse -> storyline`
+
+- **Fine** is immutable detailed evidence reserve.
+- **Medium** is the primary semantic event/navigation unit.
+- **Semantic Coarse** is adjacent-only storyline-level grouping.
+
+Key principle: **Fine preserves information; hierarchy avoids looking at all
+information every time.**
+
+Frozen long4 validation: 295 Fine retained; 104 Medium (`8/12/29/55`); 65
+Semantic Coarse (`8/12/27/18`); complete Medium lineage preserved.
+
+Run the strict cached-input fidelity replay. It recomputes Fine, the complete
+Safe-Merge tree, Fluid Loose, keyframes, Sentence-T5 boundary decisions, and
+Semantic Coarse; frozen Qwen outputs are reused only after exact input identity:
+
+```powershell
+python scripts/run_visual_pipeline_v1.py --validate-fidelity
+pytest -q tests/test_visual_pipeline_v1.py
+```
+
+Selected production code: `src/thesis_av/visual/`; configuration:
+`config/visual_pipeline_v1.json`; design/limitations:
+`docs/visual_pipeline_v1.md`.
+
+Branch structure:
+
+- `main` - previous stable baseline
+- `exp/coarse-segmentation-3way` - research experiments and historical ablations
+- `dev/thesis-av` - clean selected thesis pipeline
+
 ## Canonical Baseline v1
 
 The current executable baseline separates reusable offline indexing from the

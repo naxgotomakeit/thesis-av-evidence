@@ -8,9 +8,10 @@ or model weights inside Git.
 
 ```text
 ~/thesis/
-  thesis-av-evidence/
+  main_system/
+    thesis-av-evidence/
   models/
-    Qwen2.5-VL-3B-Instruct/
+    Qwen2.5-VL-7B-Instruct/
   data/
     EgoPolice_1.0.0/
       mcq_1s.json
@@ -36,18 +37,20 @@ python -m pip install --upgrade pip
 nvidia-smi
 ```
 
-Do not assume the server CUDA/driver stack matches Windows. PyTorch wheels
-bundle a CUDA runtime but still require a sufficiently new NVIDIA driver. If
-`nvidia-smi` shows a driver compatible with CUDA 12.1 or newer, reproduce the
-validated environment first:
+Do not assume GPU hosts share the same CUDA/driver stack. PyTorch wheels bundle
+a CUDA runtime but still require a sufficiently new NVIDIA driver. The current
+Python environment uses the official PyTorch 2.13.0 and torchvision 0.28.0
+release pair. Select the wheel index compatible with the target host; for CUDA
+13.0 the pair is:
 
 ```bash
-pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cu130
 ```
 
-If the server driver is older, or the school requires a different module,
-select the matching command from the official PyTorch installation selector
-instead of forcing `cu121`. Verify the install before the project dependencies:
+If another UCL GPU host requires a different supported CUDA wheel index, select
+the matching command from the official PyTorch installation selector instead
+of forcing `cu130`. Keep the `2.13.0`/`0.28.0` version pair together. Verify the
+install before the project dependencies:
 
 ```bash
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
@@ -64,8 +67,8 @@ After any required Hugging Face authentication, download directly to the model
 directory:
 
 ```bash
-hf download Qwen/Qwen2.5-VL-3B-Instruct \
-  --local-dir ~/thesis/models/Qwen2.5-VL-3B-Instruct
+hf download Qwen/Qwen2.5-VL-7B-Instruct \
+  --local-dir ~/thesis/models/Qwen2.5-VL-7B-Instruct
 ```
 
 The checkpoint must never be copied into the repository.
@@ -79,7 +82,7 @@ video outside the frozen manifest:
 ```bash
 python scripts/data/download_egopolice_50videos.py \
   --manifest config/data/egopolice_50videos.json \
-  --data-root ~/thesis/data/EgoPolice_1.0.0 \
+  --data-root /cs/student/project_msc/2025/rai/xinanx01/msc_thesis/data/EgoPolice_1.0.0 \
   --execute
 ```
 
@@ -89,7 +92,7 @@ the ffprobe availability audit without changing the frozen selection:
 
 ```bash
 python scripts/data/prepare_egopolice_50videos.py \
-  --data-root ~/thesis/data/EgoPolice_1.0.0 \
+  --data-root /cs/student/project_msc/2025/rai/xinanx01/msc_thesis/data/EgoPolice_1.0.0 \
   --manifest config/data/egopolice_50videos.json \
   --summary-csv outputs/data_audit/egopolice_50videos_summary.csv \
   --missing-json outputs/data_audit/egopolice_50videos_missing.json
@@ -98,17 +101,24 @@ python scripts/data/prepare_egopolice_50videos.py \
 ## Configure portable paths
 
 ```bash
-export DATA_ROOT=~/thesis/data/EgoPolice_1.0.0
-export MODEL_PATH=~/thesis/models/Qwen2.5-VL-3B-Instruct
-export OUTPUT_ROOT=~/thesis/outputs
+export DATA_ROOT=/cs/student/project_msc/2025/rai/xinanx01/msc_thesis/data/EgoPolice_1.0.0
+export MODEL_PATH=/cs/student/project_msc/2025/rai/xinanx01/msc_thesis/models/Qwen2.5-VL-7B-Instruct
+export OUTPUT_ROOT=/cs/student/project_msc/2025/rai/xinanx01/msc_thesis/outputs
 export FFMPEG_PATH=ffmpeg
 export FFPROBE_PATH=ffprobe
+export MODEL_DTYPE=bfloat16
+export QUANTIZATION_MODE=none
 
 python scripts/check_environment.py
 ```
 
 Alternatively set `MODEL_ROOT=~/thesis/models`; B0 will append the frozen
 checkpoint directory name. CLI arguments override environment variables.
+
+The formal setting is `--dtype bfloat16 --quantization-mode none`. Do not move
+to `--quantization-mode nf4_4bit` based on an estimate: use it only if a real
+one-question, eight-frame smoke test shows that BF16 cannot fit safely on the
+target GPU. Loading mode is explicit and never falls back automatically.
 
 ## B0 smoke and future staged evaluation
 
@@ -137,7 +147,7 @@ disabled in this checkpoint; it must not be used for threshold tuning.
 
 ```powershell
 $env:DATA_ROOT = 'D:\ThesisData\EgoPolice_1.0.0'
-$env:MODEL_PATH = 'C:\Users\72977\msc_thesis\models\Qwen2.5-VL-3B-Instruct'
+$env:MODEL_PATH = 'C:\Users\72977\msc_thesis\models\Qwen2.5-VL-7B-Instruct'
 $env:OUTPUT_ROOT = 'C:\Users\72977\msc_thesis\outputs'
 $env:FFMPEG_PATH = '<PATH-TO-ffmpeg.exe>'
 $env:FFPROBE_PATH = '<PATH-TO-ffprobe.exe>'
@@ -146,7 +156,6 @@ C:\Users\72977\miniforge3\envs\thesis_av\python.exe scripts\check_environment.py
 C:\Users\72977\miniforge3\envs\thesis_av\python.exe scripts\baselines\smoke_egopolice_b0.py --case-id 60s_386
 ```
 
-The Windows 6 GB RTX 3060 requires the configured bitsandbytes NF4 path for the
-approximately 7.51 GB Qwen checkpoint. The runner fails preflight if
-bitsandbytes or Accelerate is unavailable rather than silently changing the
-baseline.
+Unquantized BF16 is the formal configuration. The optional NF4 fallback
+requires bitsandbytes; the runner fails preflight rather than silently changing
+the configured loading mode.

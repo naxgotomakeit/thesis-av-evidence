@@ -13,7 +13,8 @@ from src.baselines.egopolice_b0.core import (
     resolve_video_path,
     uniform_timestamps,
 )
-from src.baselines.egopolice_b0.runner import _allowed_video_ids, resolve_runtime_config
+from src.baselines.egopolice_b0.runner import _allowed_video_ids, _error_result, resolve_runtime_config
+from src.baselines.egopolice_b0.model import validate_model_loading_settings
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -87,7 +88,7 @@ def test_portable_paths_resolve_from_environment_on_posix() -> None:
     )
     assert resolved["qa_path"].replace("\\", "/") == "/home/student/thesis/data/EgoPolice_1.0.0/mcq_60s.json"
     assert resolved["video_root"].replace("\\", "/") == "/home/student/thesis/data/EgoPolice_1.0.0/videos"
-    assert resolved["model_path"].replace("\\", "/") == "/home/student/thesis/models/Qwen2.5-VL-3B-Instruct"
+    assert resolved["model_path"].replace("\\", "/") == "/home/student/thesis/models/Qwen2.5-VL-7B-Instruct"
     assert resolved["ffmpeg_path"] == "/usr/bin/ffmpeg"
     assert output.as_posix() == "/home/student/thesis/outputs/baselines/egopolice_b0/results.jsonl"
     assert resolved["subset_manifest"].replace("\\", "/").endswith(
@@ -106,6 +107,73 @@ def test_cli_paths_override_environment_without_changing_b0_settings() -> None:
     assert resolved["num_frames"] == 8
     assert resolved["max_pixels"] == 262144
     assert resolved["generation"] == config["generation"]
+
+
+def test_bf16_unquantized_is_the_default_formal_loading_setting() -> None:
+    config = json.loads((ROOT / "config/baselines/egopolice_b0.json").read_text(encoding="utf-8"))
+    resolved, _ = resolve_runtime_config(config, environ={})
+    assert resolved["dtype"] == "bfloat16"
+    assert resolved["quantization"]["mode"] == "none"
+
+
+def test_nf4_fallback_can_be_selected_without_changing_b0_budget() -> None:
+    config = json.loads((ROOT / "config/baselines/egopolice_b0.json").read_text(encoding="utf-8"))
+    resolved, _ = resolve_runtime_config(
+        config,
+        overrides={"dtype": "bfloat16", "quantization_mode": "nf4_4bit"},
+    )
+    assert resolved["dtype"] == "bfloat16"
+    assert resolved["quantization"]["mode"] == "nf4_4bit"
+    assert resolved["num_frames"] == 8
+    assert resolved["max_pixels"] == 262144
+    assert resolved["generation"] == config["generation"]
+
+
+@pytest.mark.parametrize(
+    ("dtype", "mode"),
+    [("bfloat16", "none"), ("float16", "none"), ("bfloat16", "nf4_4bit")],
+)
+def test_supported_model_loading_settings(dtype: str, mode: str) -> None:
+    validate_model_loading_settings(dtype, mode)
+
+
+def test_unsupported_model_loading_setting_is_rejected() -> None:
+    with pytest.raises(BaselineInputError):
+        validate_model_loading_settings("int8", "none")
+    with pytest.raises(BaselineInputError):
+        validate_model_loading_settings("bfloat16", "automatic")
+
+
+def test_result_metadata_records_requested_and_actual_loading_mode() -> None:
+    config = json.loads((ROOT / "config/baselines/egopolice_b0.json").read_text(encoding="utf-8"))
+    config["model_path"] = "/models/Qwen2.5-VL-7B-Instruct"
+    case = {
+        "video_id": "copa/video",
+        "question_id": "60s_1",
+        "question": "Q?",
+        "options": ["a", "b", "c", "d", "e"],
+        "ground_truth_index": 0,
+        "ground_truth_text": "a",
+        "ignored_annotation_interval": [1, 2],
+    }
+    record = _error_result(
+        case,
+        video_path=Path("video.mp4"),
+        config=config,
+        errors=["test"],
+        error_type="runtime_error",
+        actual_model_loading_mode="bfloat16_unquantized",
+    )
+    settings = record["inference_settings"]
+    assert settings["dtype"] == "bfloat16"
+    assert settings["quantization_mode"] == "none"
+    assert settings["actual_model_loading_mode"] == "bfloat16_unquantized"
+
+
+def test_b0_metadata_identifies_controlled_7b_checkpoint() -> None:
+    config = json.loads((ROOT / "config/baselines/egopolice_b0.json").read_text(encoding="utf-8"))
+    assert config["baseline_id"] == "egopolice_b0_uniform_qwen2_5_vl_7b_v0_1"
+    assert config["model_directory_name"] == "Qwen2.5-VL-7B-Instruct"
 
 
 def test_frozen_subset_filter_contains_exact_50_source_videos() -> None:

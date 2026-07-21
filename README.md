@@ -47,14 +47,16 @@ Branch structure:
 
 B0 is an intentionally dull, independent baseline. For every question it
 uniformly decodes eight frames from the full video, sends those frames plus the
-question and five options to one local Qwen2.5-VL-3B-Instruct call, and parses
+question and five options to one local Qwen2.5-VL-7B-Instruct call, and parses
 one option index. It does not use timestamps, segmentation, hierarchy,
 retrieval, audio, planning, checking, or fallback. Frame decoding is repeated
 per question and is included in online per-query cost.
 
-The model path is never hard-coded. On a 6 GB GPU, the default configuration
-requires bitsandbytes NF4 plus Accelerate; it fails preflight instead of trying
-the approximately 7.51 GB unquantized checkpoint.
+The model path is never hard-coded. The preferred formal loading configuration
+is unquantized BF16. NF4 4-bit remains an explicit fallback mode and may be used
+only if an eight-frame smoke test on the target GPU shows that BF16 cannot fit
+safely; the runner never switches modes automatically. Every result records the
+requested dtype, quantization mode, and actual model-loading mode.
 
 One-case smoke command:
 
@@ -145,8 +147,10 @@ lineage and integration status.
 
 The portable runtime accepts `DATA_ROOT`, `MODEL_PATH` (or `MODEL_ROOT`),
 `OUTPUT_ROOT`, `FFMPEG_PATH`, and `FFPROBE_PATH`; B0 has no dependency on a
-Windows drive letter. Use Python 3.10, inspect the server first with
-`nvidia-smi`, install a compatible PyTorch/torchvision wheel before
+Windows drive letter. The UCL data root, once materialized, is
+`/cs/student/project_msc/2025/rai/xinanx01/msc_thesis/data/EgoPolice_1.0.0`.
+Use Python 3.10, inspect the server first with `nvidia-smi`, install the matched
+PyTorch 2.13.0/torchvision 0.28.0 builds before
 `requirements.txt`, and keep data/models outside the repository.
 
 The exact Linux setup, model download, environment check, Windows smoke command,

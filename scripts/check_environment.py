@@ -15,7 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = (
     "torch", "torchvision", "transformers", "accelerate", "bitsandbytes",
-    "qwen-vl-utils", "numpy", "Pillow", "scipy", "scikit-learn",
+    "numpy", "Pillow", "scipy", "scikit-learn",
     "sentence-transformers", "timm", "huggingface-hub", "pytest",
 )
 
@@ -131,7 +131,7 @@ def main() -> int:
     model_path = args.model_path or (Path(os.path.expanduser(os.environ["MODEL_PATH"])) if os.environ.get("MODEL_PATH") else None)
     model_root = args.model_root or (Path(os.path.expanduser(os.environ["MODEL_ROOT"])) if os.environ.get("MODEL_ROOT") else None)
     if model_path is None and model_root is not None:
-        model_path = model_root / "Qwen2.5-VL-3B-Instruct"
+        model_path = model_root / "Qwen2.5-VL-7B-Instruct"
     ffmpeg = args.ffmpeg_path or os.environ.get("FFMPEG_PATH", "ffmpeg")
     ffprobe = args.ffprobe_path or os.environ.get("FFPROBE_PATH", "ffprobe")
     metadata = {}

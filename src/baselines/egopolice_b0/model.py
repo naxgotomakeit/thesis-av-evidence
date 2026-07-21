@@ -20,10 +20,24 @@ def checkpoint_weight_bytes(model_path: Path) -> int:
     return sum(path.stat().st_size for path in model_path.glob("*.safetensors"))
 
 
-def preflight_environment(model_path: Path, require_4bit: bool = True) -> dict[str, Any]:
+SUPPORTED_DTYPES = {"bfloat16", "float16", "float32"}
+SUPPORTED_QUANTIZATION_MODES = {"none", "nf4_4bit"}
+
+
+def validate_model_loading_settings(dtype: str, quantization_mode: str) -> None:
+    if dtype not in SUPPORTED_DTYPES:
+        raise BaselineInputError(f"Unsupported model dtype: {dtype}")
+    if quantization_mode not in SUPPORTED_QUANTIZATION_MODES:
+        raise BaselineInputError(f"Unsupported quantization mode: {quantization_mode}")
+
+
+def preflight_environment(
+    model_path: Path, *, dtype: str, quantization_mode: str,
+) -> dict[str, Any]:
     import torch
     import transformers
 
+    validate_model_loading_settings(dtype, quantization_mode)
     required_files = ["config.json", "preprocessor_config.json", "model.safetensors.index.json"]
     missing_files = [name for name in required_files if not (model_path / name).is_file()]
     packages: dict[str, bool] = {}
@@ -54,12 +68,13 @@ def preflight_environment(model_path: Path, require_4bit: bool = True) -> dict[s
         errors.append("missing_checkpoint_files:" + ",".join(missing_files))
     if not cuda:
         errors.append("cuda_unavailable")
-    if require_4bit:
-        if not packages["bitsandbytes"]:
-            errors.append("bitsandbytes_unavailable")
-        if not packages["accelerate"]:
-            errors.append("accelerate_unavailable")
-    elif cuda and weight_bytes > vram_bytes:
+    elif dtype == "bfloat16" and not torch.cuda.is_bf16_supported():
+        errors.append("bfloat16_unsupported_by_gpu")
+    if not packages["accelerate"]:
+        errors.append("accelerate_unavailable")
+    if quantization_mode == "nf4_4bit" and not packages["bitsandbytes"]:
+        errors.append("bitsandbytes_unavailable")
+    if quantization_mode == "none" and cuda and weight_bytes > vram_bytes:
         errors.append("unquantized_checkpoint_exceeds_total_vram")
     return {
         "passed": not errors,
@@ -67,6 +82,8 @@ def preflight_environment(model_path: Path, require_4bit: bool = True) -> dict[s
         "model_path": str(model_path),
         "checkpoint_weight_bytes": weight_bytes,
         "checkpoint_quantized": checkpoint_quantized,
+        "requested_dtype": dtype,
+        "requested_quantization_mode": quantization_mode,
         "cuda_available": cuda,
         "gpu_name": torch.cuda.get_device_name(0) if cuda else None,
         "total_vram_bytes": vram_bytes,
@@ -81,34 +98,56 @@ def preflight_environment(model_path: Path, require_4bit: bool = True) -> dict[s
     }
 
 
-class Qwen25VL3BBaseline:
-    def __init__(self, *, model_path: Path, max_pixels: int, seed: int, quantization: dict[str, Any]):
+class Qwen25VL7BBaseline:
+    def __init__(
+        self, *, model_path: Path, max_pixels: int, seed: int, dtype: str,
+        quantization: dict[str, Any],
+    ):
         import torch
         from transformers import AutoProcessor, BitsAndBytesConfig, Qwen2_5_VLForConditionalGeneration
 
+        quantization_mode = str(quantization["mode"])
+        validate_model_loading_settings(dtype, quantization_mode)
+        torch_dtype = {
+            "bfloat16": torch.bfloat16,
+            "float16": torch.float16,
+            "float32": torch.float32,
+        }[dtype]
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type=str(quantization["bnb_4bit_quant_type"]),
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=bool(quantization["bnb_4bit_use_double_quant"]),
-        )
+        load_kwargs: dict[str, Any] = {
+            "local_files_only": True,
+            "device_map": {"": 0},
+            "dtype": torch_dtype,
+        }
+        if quantization_mode == "nf4_4bit":
+            compute_dtype_name = str(quantization["bnb_4bit_compute_dtype"])
+            validate_model_loading_settings(compute_dtype_name, quantization_mode)
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type=str(quantization["bnb_4bit_quant_type"]),
+                bnb_4bit_compute_dtype={
+                    "bfloat16": torch.bfloat16,
+                    "float16": torch.float16,
+                    "float32": torch.float32,
+                }[compute_dtype_name],
+                bnb_4bit_use_double_quant=bool(quantization["bnb_4bit_use_double_quant"]),
+            )
         load_started = time.perf_counter()
         self.processor = AutoProcessor.from_pretrained(
             model_path, local_files_only=True, max_pixels=int(max_pixels)
         )
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path,
-            local_files_only=True,
-            quantization_config=quantization_config,
-            device_map={"": 0},
-            torch_dtype=torch.float16,
+            **load_kwargs,
         )
         self.model.eval()
         torch.cuda.synchronize()
         self.model_load_latency_sec = time.perf_counter() - load_started
         self.model_path = model_path
+        self.actual_model_loading_mode = (
+            "nf4_4bit" if quantization_mode == "nf4_4bit" else f"{dtype}_unquantized"
+        )
 
     def infer(
         self, *, images: list[Image.Image], prompt: str, generation: dict[str, Any]

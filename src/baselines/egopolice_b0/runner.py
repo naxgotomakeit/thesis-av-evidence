@@ -14,7 +14,7 @@ from .core import (
     load_mcq_cases,
     resolve_video_path,
 )
-from .model import Qwen25VL3BBaseline, preflight_environment
+from .model import Qwen25VL7BBaseline, preflight_environment
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -53,7 +53,7 @@ def resolve_runtime_config(
     output_path = _path_value(cli.get("output"))
 
     if model_path is None and model_root is not None:
-        model_path = model_root / str(values.get("model_directory_name", "Qwen2.5-VL-3B-Instruct"))
+        model_path = model_root / str(values.get("model_directory_name", "Qwen2.5-VL-7B-Instruct"))
     if qa_path is None and data_root is not None:
         qa_path = data_root / str(values.get("qa_metadata_file", "mcq_60s.json"))
     if video_root is None and data_root is not None:
@@ -76,6 +76,14 @@ def resolve_runtime_config(
     for name in ("num_frames", "max_pixels"):
         if cli.get(name) is not None:
             values[name] = int(cli[name])
+    values["dtype"] = str(choose("dtype", "MODEL_DTYPE", "dtype") or "bfloat16")
+    quantization = dict(values.get("quantization") or {})
+    quantization["mode"] = str(
+        cli.get("quantization_mode")
+        or env.get("QUANTIZATION_MODE")
+        or quantization.get("mode", "none")
+    )
+    values["quantization"] = quantization
     return values, output_path
 
 
@@ -89,7 +97,7 @@ def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
 
 def _error_result(
     case: dict[str, Any], *, video_path: Path, config: dict[str, Any],
-    errors: list[str], error_type: str,
+    errors: list[str], error_type: str, actual_model_loading_mode: str | None = None,
 ) -> dict[str, Any]:
     return {
         "baseline_id": config["baseline_id"],
@@ -118,7 +126,9 @@ def _error_result(
         "inference_settings": {
             "num_frames": config["num_frames"],
             "max_pixels": config["max_pixels"],
-            "quantization": config["quantization"],
+            "dtype": config["dtype"],
+            "quantization_mode": config["quantization"]["mode"],
+            "actual_model_loading_mode": actual_model_loading_mode,
             "generation": config["generation"],
             "prompt_version": config["prompt_version"],
         },
@@ -157,7 +167,9 @@ def run(config: dict[str, Any], *, output_path: Path, limit: int, case_id: str |
     model_path = Path(config["model_path"])
     video_root = Path(config["video_root"])
     environment = preflight_environment(
-        model_path, require_4bit=bool(config["quantization"]["require_4bit"])
+        model_path,
+        dtype=str(config["dtype"]),
+        quantization_mode=str(config["quantization"]["mode"]),
     )
     case_paths = [(case, resolve_video_path(video_root, case["video_relative_path"])) for case in selected]
     missing_videos = [str(path) for _, path in case_paths if not path.is_file()]
@@ -180,10 +192,11 @@ def run(config: dict[str, Any], *, output_path: Path, limit: int, case_id: str |
             records.append(record)
         return {"passed": False, "preflight": environment, "records": records, "model_load_latency_sec": 0.0}
 
-    model = Qwen25VL3BBaseline(
+    model = Qwen25VL7BBaseline(
         model_path=model_path,
         max_pixels=int(config["max_pixels"]),
         seed=int(config["seed"]),
+        dtype=str(config["dtype"]),
         quantization=config["quantization"],
     )
     for case, video_path in case_paths:
@@ -228,7 +241,9 @@ def run(config: dict[str, Any], *, output_path: Path, limit: int, case_id: str |
                 "inference_settings": {
                     "num_frames": config["num_frames"],
                     "max_pixels": config["max_pixels"],
-                    "quantization": config["quantization"],
+                    "dtype": config["dtype"],
+                    "quantization_mode": config["quantization"]["mode"],
+                    "actual_model_loading_mode": model.actual_model_loading_mode,
                     "generation": config["generation"],
                     "prompt_version": config["prompt_version"],
                 },
@@ -249,6 +264,7 @@ def run(config: dict[str, Any], *, output_path: Path, limit: int, case_id: str |
                 config=config,
                 errors=[repr(exc)],
                 error_type="cuda_oom" if oom else "runtime_error",
+                actual_model_loading_mode=model.actual_model_loading_mode,
             )
             record["total_per_question_latency_sec"] = time.perf_counter() - question_started
             record["oom"] = oom
@@ -282,6 +298,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--case-id")
     parser.add_argument("--num-frames", type=int)
     parser.add_argument("--max-pixels", type=int)
+    parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"))
+    parser.add_argument("--quantization-mode", choices=("none", "nf4_4bit"))
     parser.add_argument("--ffmpeg-path")
     parser.add_argument("--ffprobe-path")
     return parser.parse_args(argv)
@@ -294,7 +312,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         key: getattr(args, key)
         for key in (
             "data_root", "model_root", "model_path", "qa_path", "video_root", "output_root",
-            "output", "subset_manifest", "num_frames", "max_pixels", "ffmpeg_path", "ffprobe_path",
+            "output", "subset_manifest", "num_frames", "max_pixels", "dtype",
+            "quantization_mode", "ffmpeg_path", "ffprobe_path",
         )
     }
     config, output_path = resolve_runtime_config(config, overrides=overrides)

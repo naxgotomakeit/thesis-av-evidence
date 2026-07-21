@@ -43,6 +43,28 @@ Branch structure:
 - `exp/coarse-segmentation-3way` - research experiments and historical ablations
 - `dev/thesis-av` - clean selected thesis pipeline
 
+## EgoPolice B0: uniform full-video frames
+
+B0 is an intentionally dull, independent baseline. For every question it
+uniformly decodes eight frames from the full video, sends those frames plus the
+question and five options to one local Qwen2.5-VL-3B-Instruct call, and parses
+one option index. It does not use timestamps, segmentation, hierarchy,
+retrieval, audio, planning, checking, or fallback. Frame decoding is repeated
+per question and is included in online per-query cost.
+
+The model path is never hard-coded. On a 6 GB GPU, the default configuration
+requires bitsandbytes NF4 plus Accelerate; it fails preflight instead of trying
+the approximately 7.51 GB unquantized checkpoint.
+
+One-case smoke command:
+
+```powershell
+python scripts/baselines/smoke_egopolice_b0.py --model-path <LOCAL_QWEN_PATH> --qa-path <EGOPOLICE_MCQ_JSON> --video-root <MATCHING_EGOPOLICE_VIDEO_ROOT> --ffmpeg-path <FFMPEG> --ffprobe-path <FFPROBE> --output outputs/baselines/egopolice_b0/smoke.jsonl
+```
+
+After a successful smoke, run at most five cases by replacing the smoke script
+with `scripts/baselines/run_egopolice_b0.py --limit 5`.
+
 ## Canonical Baseline v1
 
 The current executable baseline separates reusable offline indexing from the
@@ -118,3 +140,17 @@ efficiency improvement.
 Generated outputs, local media, embeddings, model weights, caches and secrets
 are excluded from Git. See [CURRENT_BASELINE.md](CURRENT_BASELINE.md) for source
 lineage and integration status.
+
+## Linux / School GPU Setup
+
+The portable runtime accepts `DATA_ROOT`, `MODEL_PATH` (or `MODEL_ROOT`),
+`OUTPUT_ROOT`, `FFMPEG_PATH`, and `FFPROBE_PATH`; B0 has no dependency on a
+Windows drive letter. Use Python 3.10, inspect the server first with
+`nvidia-smi`, install a compatible PyTorch/torchvision wheel before
+`requirements.txt`, and keep data/models outside the repository.
+
+The exact Linux setup, model download, environment check, Windows smoke command,
+and staged B0 commands are in
+[docs/linux_school_gpu_setup.md](docs/linux_school_gpu_setup.md). The frozen,
+performance-independent EgoPolice pool is
+[config/data/egopolice_50videos.json](config/data/egopolice_50videos.json).

@@ -187,3 +187,41 @@ temporal structure and consider C-RADIO for semantic retrieval. Similar segment
 counts on one video do not yet justify a unified C-RADIO replacement. DINO's
 measured end-to-end time was dominated by its official CPU preprocessing; its
 GPU inference and VRAM costs remained much lower.
+
+## 2026-07-22 — B0 YKI08 preflight — non-formal, pipeline validation only
+
+**PRE-FLIGHT / NON-FORMAL.** This is not a formal B0 result because only 1/20
+formal source videos is ready. No B0 definition, frozen manifest, prompt,
+sampling rule, or experiment protocol was changed.
+
+- Run ID: `B0-preflight-YKI08-nonformal-v1`
+- Branch/commit at execution: `exp/dull-baseline-qwen7b` / `3c22ffe`
+- Frozen question-manifest SHA256:
+  `fca734b9764ed132483ba3858db34243b50384ba2f1e115197c15762adcb23a5`
+- Input: full `pasadena/YKI08`, ffprobe duration 1611.584 seconds; all five
+  frozen YKI08 questions (2 × 1s, 2 × 10s, 1 × 60s)
+- Sampling: eight exact equal-bin midpoint timestamps, identical for all five
+  questions: 100.724, 302.172, 503.620, 705.068, 906.516, 1107.964,
+  1309.412, and 1510.860 seconds
+- Model: local Qwen2.5-VL-7B-Instruct, BF16, no quantization, deterministic
+  decoding; one model load; exactly one call and eight frames per question
+- Accuracy: 0/5 (1s 0/2; 10s 0/2; 60s 0/1)
+- GT Interval Hit@8: 1/5 (20%); this remains a coarse temporal exposure
+  diagnostic, not true evidence recall
+- Mean/median per-query latency excluding model load: 6.618/5.705 seconds
+- Mean frame extraction/preprocessing/inference latency: 3.314/1.081/2.222
+  seconds
+- One-time model load: 153.290 seconds
+- Peak allocated GPU memory: 17,198,808,576 bytes
+- Calls/frames: 5 total Qwen calls; 8 frames per question
+- Result: `outputs/experiments/B0/preflight_YKI08/results.json`
+- Preflight audit:
+  `outputs/experiments/B0/preflight_YKI08/preflight_checks.json`
+- Result SHA256:
+  `2e3f464c5c56c2f8786be75c7b9545f153b8dd5aa293b1355aaeba2ae203ad5c`
+
+Conclusion: the frozen B0 pipeline completed successfully and released GPU
+memory. It is technically ready for the paired 98-question formal B0 once all
+20 source videos are available. Accuracy is explicitly non-formal and did not
+trigger any algorithm or configuration change. The remaining blocker is data
+readiness (1/20 videos), not this pipeline preflight.

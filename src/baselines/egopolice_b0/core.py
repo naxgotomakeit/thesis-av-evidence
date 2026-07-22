@@ -62,6 +62,39 @@ def uniform_timestamps(duration_sec: float, num_frames: int) -> list[float]:
     return [float((index + 0.5) * bin_width) for index in range(num_frames)]
 
 
+def evaluate_gt_exposure(
+    timestamps: list[float], annotation_interval: list[Any],
+) -> dict[str, Any]:
+    """Evaluate temporal exposure after question-independent B0 sampling.
+
+    This metric helper does not select or alter frames. Callers must first
+    finish sampling from the full video duration, then pass the frozen
+    timestamps here for post-hoc comparison with the annotation interval.
+    """
+    if len(annotation_interval) != 2:
+        raise BaselineInputError("GT interval must contain [start, end)")
+    try:
+        start_sec, end_sec = (float(value) for value in annotation_interval)
+    except (TypeError, ValueError) as exc:
+        raise BaselineInputError("GT interval values must be numeric") from exc
+    if start_sec < 0 or end_sec <= start_sec:
+        raise BaselineInputError(f"Invalid GT interval: [{start_sec}, {end_sec})")
+    inside = [timestamp for timestamp in timestamps if start_sec <= timestamp < end_sec]
+    if inside:
+        nearest_distance = 0.0
+    else:
+        nearest_distance = min(
+            min(abs(timestamp - start_sec), abs(timestamp - end_sec))
+            for timestamp in timestamps
+        )
+    return {
+        "gt_interval_sec": [start_sec, end_sec],
+        "gt_interval_hit_at_8": int(bool(inside)),
+        "number_of_frames_inside_gt_interval": len(inside),
+        "nearest_sample_distance_to_gt_interval_seconds": float(nearest_distance),
+    }
+
+
 def build_mcq_prompt(question: str, options: list[str], frame_count: int) -> str:
     if len(options) != 5:
         raise BaselineInputError("B0 requires exactly five options")

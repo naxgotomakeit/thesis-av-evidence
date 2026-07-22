@@ -154,6 +154,7 @@ class Qwen25VL7BBaseline:
     ) -> dict[str, Any]:
         import torch
 
+        preprocessing_started = time.perf_counter()
         content = [{"type": "image"} for _ in images]
         content.append({"type": "text", "text": prompt})
         messages = [{"role": "user", "content": content}]
@@ -168,6 +169,8 @@ class Qwen25VL7BBaseline:
         text_tokens = len(self.processor.tokenizer(rendered, add_special_tokens=False)["input_ids"])
         total_input_tokens = int(inputs["input_ids"].shape[1])
         visual_tokens = max(0, total_input_tokens - text_tokens)
+        torch.cuda.synchronize()
+        preprocessing_latency = time.perf_counter() - preprocessing_started
         torch.cuda.reset_peak_memory_stats()
         started = time.perf_counter()
         with torch.inference_mode():
@@ -190,6 +193,7 @@ class Qwen25VL7BBaseline:
         return {
             "prediction_index": prediction,
             "raw_output": raw,
+            "preprocessing_latency_sec": preprocessing_latency,
             "inference_latency_sec": inference_latency,
             "text_token_count": text_tokens,
             "visual_token_count": visual_tokens,

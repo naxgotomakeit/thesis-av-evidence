@@ -84,4 +84,3 @@ def test_single_video_fps_list_is_normalized_for_transformers_5_14():
     normalized = normalize_single_video_fps([object()], {"fps": [1.0], "do_sample_frames": True})
 
     assert normalized == {"fps": 1.0, "do_sample_frames": True}
-

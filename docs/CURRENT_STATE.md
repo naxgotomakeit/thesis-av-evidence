@@ -28,5 +28,24 @@ Formal set freeze completed on 2026-07-22:
   all 20 videos.
 
 No formal B0 run, B1 work, or new video download was started during the freeze.
-The next execution task is not authorized in this handoff; do not run formal B0
-or begin B1 without an explicit instruction.
+Formal B0 remains blocked until all 20 manifest videos have validated ffprobe
+metadata and the actual-duration bin assignments plus 98-question distribution
+are complete. Do not run formal B0 or begin B1 without an explicit instruction.
+
+Acquisition readiness as of 2026-07-22:
+
+- Ready: 1/20 (`pasadena/YKI08`, validated duration 1611.584 seconds,
+  `gt_1200`).
+- Blocked: 19/20 Vimeo targets. The first official Vimeo URL returned HTTP 401
+  OAuth authorization failure; the downloader then stopped all further Vimeo
+  requests safely.
+- Formal 98-question actual-duration distribution currently resolved: 5
+  questions in `gt_1200` (2×1s, 2×10s, 1×60s); 93 questions remain explicitly
+  unavailable pending legitimate authenticated download and ffprobe.
+- Formal B0 readiness: false. Do not substitute parent annotation-end lower
+  bounds for actual source duration bins.
+
+Canonical location check: this file is under
+`/cs/student/project_msc/2025/rai/xinanx01/msc_thesis/main_system/thesis-av-evidence`.
+The previously displayed `/rai/xinan/x01` path was a reporting typo; no duplicate
+tree exists there.

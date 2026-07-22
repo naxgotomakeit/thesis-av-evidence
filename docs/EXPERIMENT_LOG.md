@@ -64,3 +64,36 @@ selection.
 
 The exact rule, seed, parent hashes, selected IDs, and fallback cases are stored
 in the two versioned manifests under `config/data/`.
+
+## 2026-07-22 — formal-video acquisition/readiness attempt v1
+
+- Run ID: `egopolice-ablation20-acquisition-v1`
+- Branch/base commit: `exp/dull-baseline-qwen7b` / `7f58500`
+- Video manifest SHA256:
+  `0cb8d55962634d900d440f943a7d91ca5fe5473f3f5d0c096c826685acd3e1c5`
+- Question manifest SHA256:
+  `fca734b9764ed132483ba3858db34243b50384ba2f1e115197c15762adcb23a5`
+- Configuration: exact frozen 20 targets; canonical data root; existing files
+  probed first; resumable yt-dlp; two retries maximum; stop all further Vimeo
+  requests after an authentication or rate-limit blocker
+- Change/reason: data readiness only, required before formal B0; no model or
+  experiment-definition change
+- Result: 1/20 ready, 19/20 blocked, 0 missing-unattempted, 0 invalid
+- Ready media: `pasadena/YKI08`, 1611.584 seconds, `gt_1200`, 1280×720,
+  30 FPS, H.264 video, AAC audio, 670,287,000 bytes
+- Blocker: the first Vimeo target returned HTTP 401 while yt-dlp attempted to
+  fetch the Vimeo macOS OAuth token; the other 18 Vimeo targets were not
+  requested
+- Formal metrics: not run; no Qwen calls
+- Artifacts:
+  `outputs/data_audit/egopolice_ablation20_download_attempt.json`,
+  `egopolice_ablation20_readiness.{json,csv}`,
+  `egopolice_ablation98_pre_evaluation.json`, and
+  `egopolice_ablation98_duration_distribution.csv`
+- Conclusion: formal B0 is blocked because actual ffprobe duration bins are
+  unavailable for 19 videos
+- Limitation/anomaly: authenticated Vimeo cookies/credentials are not available
+  in this execution environment; the 93 affected questions remain in an
+  explicit `unavailable` duration-bin row and are not assigned using proxies
+- Next step: resume the exact same downloader with legitimate authenticated
+  Vimeo cookies, then regenerate the readiness audit; do not change manifests

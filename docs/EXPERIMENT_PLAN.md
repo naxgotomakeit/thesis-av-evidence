@@ -44,3 +44,43 @@ The original B0-5 smoke JSON is preserved byte-for-byte and therefore retains
 the legacy field name `gt_hit_at_8`; in that artifact it has exactly the GT
 Interval Hit@8 meaning above. Future diagnostic schema uses
 `gt_interval_hit_at_8`.
+
+## Frozen evaluation dimensions
+
+Every formal B0–B4 result must use two separate grouping dimensions:
+
+1. Question/annotation duration class: `1s`, `10s`, `60s`.
+2. Full source-video duration class, computed only from validated ffprobe media
+   duration:
+   - `le_300`: duration <= 300 seconds
+   - `301_600`: 300 < duration <= 600 seconds
+   - `601_1200`: 600 < duration <= 1200 seconds
+   - `gt_1200`: duration > 1200 seconds
+
+The source-video bins must never be derived from the 1s/10s/60s annotation
+window or from the parent manifest's annotation-end lower bound. The formal
+video-to-bin assignment is frozen in the readiness audit before inference.
+
+Every formal report must include correct/total, accuracy, question count, and
+distinct-video count overall, by question-duration class, and by source-video
+duration class. Where counts permit, also report the source-length × question-
+duration cross-tab. Never report percentages without sample counts.
+
+For B0, each source-length bin must additionally aggregate GT Interval Hit@8,
+mean nearest timestamp distance to the GT interval, mean/median online latency,
+frame extraction and inference latency, text/visual tokens, frames/question,
+and model calls/question. B1–B4 must reuse the same bins and aggregation logic;
+where applicable they additionally report GT Interval Hit@K or retrieval
+Recall@K. This protocol enables later paired tests of whether uniform sampling
+degrades with video length and whether retrieval, hierarchy, or Planner changes
+that pattern. No such conclusion is assumed in advance.
+
+## Formal experiment log contract
+
+After every formal run, append one concise entry to `docs/EXPERIMENT_LOG.md`
+with run ID, date, branch, git commit, both manifest hashes, model/checkpoint,
+configuration, exact change and reason relative to the previous stage, overall
+metrics, both duration-grouped metric sets, efficiency metrics, artifact paths,
+conclusion, limitations/anomalies, and next step. Raw machine-readable results
+remain under `outputs/`; documentation is the handoff layer, not a substitute.
+Update `docs/CURRENT_STATE.md` after each meaningful stage.

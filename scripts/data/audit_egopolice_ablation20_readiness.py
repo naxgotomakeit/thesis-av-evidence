@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import subprocess
 import sys
+import time
 from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
@@ -18,6 +20,18 @@ from src.evaluation.egopolice_formal import (
     VIDEO_DURATION_BINS,
     source_video_duration_bin,
 )
+
+
+EXPECTED_VIDEO_MANIFEST_SHA256 = "0cb8d55962634d900d440f943a7d91ca5fe5473f3f5d0c096c826685acd3e1c5"
+EXPECTED_QUESTION_MANIFEST_SHA256 = "fca734b9764ed132483ba3858db34243b50384ba2f1e115197c15762adcb23a5"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _probe(path: Path, ffprobe_path: str) -> dict[str, Any]:
@@ -39,6 +53,8 @@ def _probe(path: Path, ffprobe_path: str) -> dict[str, Any]:
         duration = 0.0
     if not video or duration <= 0:
         return {"readable": False, "error": "missing video stream or non-positive duration"}
+    actual_size = path.stat().st_size
+    format_size = int(payload.get("format", {}).get("size", actual_size))
     return {
         "readable": True,
         "error": None,
@@ -50,7 +66,45 @@ def _probe(path: Path, ffprobe_path: str) -> dict[str, Any]:
         "video_codec": video.get("codec_name"),
         "audio_present": audio is not None,
         "audio_codec": audio.get("codec_name") if audio else None,
-        "file_size_bytes": int(payload.get("format", {}).get("size", path.stat().st_size)),
+        "file_size_bytes": actual_size,
+        "ffprobe_format_size_bytes": format_size,
+        "file_size_matches_ffprobe": actual_size == format_size,
+    }
+
+
+def _packet_scan(path: Path, ffprobe_path: str) -> dict[str, Any]:
+    """Read every demuxed packet so a valid header alone cannot pass readiness."""
+    started = time.perf_counter()
+    completed = subprocess.run([
+        ffprobe_path, "-v", "warning", "-count_packets",
+        "-show_entries", "stream=index,codec_type,nb_read_packets",
+        "-of", "json", str(path),
+    ], capture_output=True, text=True, check=False)
+    warnings = [line for line in completed.stderr.splitlines() if line.strip()]
+    try:
+        payload = json.loads(completed.stdout) if completed.returncode == 0 else {}
+    except json.JSONDecodeError:
+        payload = {}
+    streams = payload.get("streams", [])
+    video_packets = sum(
+        int(stream.get("nb_read_packets") or 0)
+        for stream in streams if stream.get("codec_type") == "video"
+    )
+    audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
+    audio_packets = sum(int(stream.get("nb_read_packets") or 0) for stream in audio_streams)
+    passed = (
+        completed.returncode == 0
+        and video_packets > 0
+        and (not audio_streams or audio_packets > 0)
+        and not warnings
+    )
+    return {
+        "full_packet_scan_passed": passed,
+        "full_packet_scan_returncode": completed.returncode,
+        "video_packet_count": video_packets,
+        "audio_packet_count": audio_packets,
+        "full_packet_scan_warnings": warnings,
+        "full_packet_scan_latency_sec": time.perf_counter() - started,
     }
 
 
@@ -91,6 +145,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    video_manifest_sha = _sha256(args.video_manifest)
+    question_manifest_sha = _sha256(args.question_manifest)
+    if video_manifest_sha != EXPECTED_VIDEO_MANIFEST_SHA256:
+        raise ValueError(
+            f"Frozen video manifest SHA256 mismatch: {video_manifest_sha}"
+        )
+    if question_manifest_sha != EXPECTED_QUESTION_MANIFEST_SHA256:
+        raise ValueError(
+            f"Frozen question manifest SHA256 mismatch: {question_manifest_sha}"
+        )
     videos = json.loads(args.video_manifest.read_text(encoding="utf-8"))["videos"]
     questions = json.loads(args.question_manifest.read_text(encoding="utf-8"))["questions"]
     question_counts = Counter(row["duration_class"] for row in questions)
@@ -104,11 +168,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         or question_counts != Counter({"1s": 39, "10s": 38, "60s": 21})
     ):
         raise ValueError("Frozen 20-video/98-question contract failed")
+    official_metadata: dict[str, dict[str, dict[str, Any]]] = {}
+    for metadata_name in sorted({str(row["metadata_source_file"]) for row in questions}):
+        metadata_path = args.data_root / metadata_name
+        if not metadata_path.is_file():
+            raise ValueError(f"Missing official MCQ metadata: {metadata_path}")
+        rows = json.loads(metadata_path.read_text(encoding="utf-8"))
+        official_metadata[metadata_name] = {str(row["id"]): row for row in rows}
+        if len(official_metadata[metadata_name]) != len(rows):
+            raise ValueError(f"Duplicate IDs in official MCQ metadata: {metadata_path}")
+    max_frozen_gt_end_by_video: dict[str, float] = defaultdict(float)
     for question in questions:
         start_sec, end_sec = (float(value) for value in question["gt_interval_sec"])
         answer = int(question["ground_truth_index"])
-        if end_sec <= start_sec or not 0 <= answer < 5 or not question["ground_truth_text"]:
+        options = question.get("options")
+        if (
+            end_sec <= start_sec or not 0 <= answer < 5
+            or not isinstance(options, list) or len(options) != 5
+            or question["ground_truth_text"] != options[answer]
+        ):
             raise ValueError(f"Invalid frozen question metadata: {question['question_id']}")
+        metadata_name = str(question["metadata_source_file"])
+        official = official_metadata[metadata_name].get(str(question["question_id"]))
+        if official is None:
+            raise ValueError(f"Question absent from official metadata: {question['question_id']}")
+        official_video_id = str(official.get("video") or "").removesuffix(".mp4")
+        official_interval = [float(official["start second"]), float(official["end second"])]
+        if (
+            official_video_id != question["video_id"]
+            or str(official.get("question")) != question["question"]
+            or list(official.get("options") or []) != options
+            or int(official.get("answer")) != answer
+            or official_interval != [start_sec, end_sec]
+        ):
+            raise ValueError(f"Frozen/official metadata mismatch: {question['question_id']}")
+        max_frozen_gt_end_by_video[question["video_id"]] = max(
+            max_frozen_gt_end_by_video[question["video_id"]], end_sec
+        )
     download_results = {}
     if args.download_log.is_file():
         download_results = {
@@ -122,10 +218,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         download = download_results.get(video["video_id"], {})
         if path.is_file():
             probe = _probe(path, args.ffprobe_path)
+            strict_errors: list[str] = []
+            if probe["readable"]:
+                probe.update(_packet_scan(path, args.ffprobe_path))
+                duration = float(probe["duration_sec"])
+                lower_bound = float(video["duration_lower_bound_sec"])
+                max_frozen_gt_end = max_frozen_gt_end_by_video[video["video_id"]]
+                probe["duration_lower_bound_sec"] = lower_bound
+                probe["max_frozen_gt_interval_end_sec"] = max_frozen_gt_end
+                probe["duration_covers_metadata_lower_bound"] = duration >= lower_bound
+                probe["duration_covers_all_frozen_gt_intervals"] = duration >= max_frozen_gt_end
+                if not probe["file_size_matches_ffprobe"]:
+                    strict_errors.append("filesystem/ffprobe size mismatch")
+                if not probe["full_packet_scan_passed"]:
+                    strict_errors.append("full ffprobe packet scan failed or warned")
+                if not probe["duration_covers_metadata_lower_bound"]:
+                    strict_errors.append("duration below all-question metadata lower bound")
+                if not probe["duration_covers_all_frozen_gt_intervals"]:
+                    strict_errors.append("duration does not cover frozen GT intervals")
+            else:
+                strict_errors.append(str(probe.get("error") or "metadata probe failed"))
+            probe["strict_validation_errors"] = strict_errors
+            probe["readable"] = probe["readable"] and not strict_errors
             status = "ready" if probe["readable"] else "failed"
         else:
             probe = {"readable": False, "error": None}
             status = "blocked" if download.get("status") == "blocked_not_attempted" or download.get("blocker") else "missing"
+        current_error = (
+            "; ".join(probe.get("strict_validation_errors") or [])
+            or probe.get("error")
+            or (download.get("error") or download.get("blocker") or download.get("stderr_tail") if status != "ready" else None)
+        )
         audit_rows.append({
             "manifest_video_id": video["video_id"],
             "actual_file_path": str(path),
@@ -138,9 +261,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             "audio_present": probe.get("audio_present"),
             "audio_codec": probe.get("audio_codec"),
             "file_size_bytes": probe.get("file_size_bytes", 0),
+            "ffprobe_format_size_bytes": probe.get("ffprobe_format_size_bytes"),
+            "file_size_matches_ffprobe": probe.get("file_size_matches_ffprobe"),
+            "video_packet_count": probe.get("video_packet_count"),
+            "audio_packet_count": probe.get("audio_packet_count"),
+            "full_packet_scan_passed": probe.get("full_packet_scan_passed"),
+            "full_packet_scan_warnings": probe.get("full_packet_scan_warnings"),
+            "full_packet_scan_latency_sec": probe.get("full_packet_scan_latency_sec"),
+            "duration_lower_bound_sec": probe.get("duration_lower_bound_sec"),
+            "max_frozen_gt_interval_end_sec": probe.get("max_frozen_gt_interval_end_sec"),
+            "duration_covers_metadata_lower_bound": probe.get("duration_covers_metadata_lower_bound"),
+            "duration_covers_all_frozen_gt_intervals": probe.get("duration_covers_all_frozen_gt_intervals"),
             "readable_valid": probe["readable"],
             "mapping_unambiguous": True,
-            "error": probe.get("error") or download.get("error") or download.get("blocker") or download.get("stderr_tail"),
+            "error": current_error,
+            "historical_download_note": download.get("error") or download.get("blocker") or download.get("stderr_tail"),
         })
     by_video = {row["manifest_video_id"]: row for row in audit_rows}
     enriched_questions = []
@@ -159,6 +294,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "ground_truth_index": question["ground_truth_index"],
             "ground_truth_text": question["ground_truth_text"],
             "source_video_ready": video["status"] == "ready",
+            "official_metadata_mapping_valid": True,
         })
     status_counts = Counter(row["status"] for row in audit_rows)
     duration_counts = Counter(
@@ -167,7 +303,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     payload = {
         "schema_version": "egopolice-ablation20-readiness-v1",
         "video_manifest": str(args.video_manifest),
+        "video_manifest_sha256": video_manifest_sha,
         "question_manifest": str(args.question_manifest),
+        "question_manifest_sha256": question_manifest_sha,
+        "validation_method": {
+            "metadata_probe": "ffprobe format/stream metadata",
+            "truncation_check": "ffprobe full-file packet count with warnings treated as failure",
+            "duration_checks": "validated duration must cover parent metadata lower bound and every frozen GT interval",
+            "question_mapping": "all frozen fields matched exactly against official mcq_1s/mcq_10s/mcq_60s metadata",
+        },
         "summary": {
             "target_videos": 20,
             "ready": status_counts["ready"],
@@ -191,8 +335,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     question_payload = {
         "schema_version": "egopolice-ablation98-pre-evaluation-v1",
         "formal_evaluation_ready": status_counts["ready"] == 20,
+        "video_manifest_sha256": video_manifest_sha,
+        "question_manifest_sha256": question_manifest_sha,
         "question_count": len(enriched_questions),
+        "ready_question_count": sum(row["source_video_ready"] for row in enriched_questions),
         "distinct_video_count": len(question_video_ids),
+        "official_metadata_mapping_verified": True,
         "question_count_by_duration_class": {
             name: question_counts[name] for name in QUESTION_DURATION_CLASSES
         },

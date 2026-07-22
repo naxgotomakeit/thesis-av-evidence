@@ -161,9 +161,18 @@ class Qwen25VL7BBaseline:
         rendered = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        inputs = self.processor(
-            text=[rendered], images=images, padding=True, return_tensors="pt"
-        )
+        processor_inputs: dict[str, Any] = {
+            "text": [rendered],
+            "padding": True,
+            "return_tensors": "pt",
+        }
+        # The formal Blind control intentionally contains no visual input.
+        # Omitting the images keyword is the processor's supported text-only
+        # path. The existing B0 path is byte-for-byte equivalent when images
+        # is non-empty.
+        if images:
+            processor_inputs["images"] = images
+        inputs = self.processor(**processor_inputs)
         device = next(self.model.parameters()).device
         inputs = {key: value.to(device) for key, value in inputs.items()}
         text_tokens = len(self.processor.tokenizer(rendered, add_special_tokens=False)["input_ids"])

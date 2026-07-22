@@ -97,3 +97,93 @@ in the two versioned manifests under `config/data/`.
   explicit `unavailable` duration-bin row and are not assigned using proxies
 - Next step: resume the exact same downloader with legitimate authenticated
   Vimeo cookies, then regenerate the readiness audit; do not change manifests
+
+## 2026-07-22 — C-RADIOv4 representation smoke
+
+**Exploratory, not a formal B0–B4 result.** No Qwen calls were made and no
+frozen experiment definition was changed.
+
+- Video/questions: full `pasadena/YKI08` (1611.584 seconds); all five frozen
+  YKI08 questions from `egopolice_ablation_questions_v1.json`
+- Model: official `nvidia/C-RADIOv4-SO400M` checkpoint revision
+  `c0457f5d`, official `NVlabs/RADIO` implementation revision `c0f37017`,
+  BF16 CUDA autocast, official `siglip2-g` adaptor
+- Offline representation: 1,612 deterministic 1 FPS frames at 512×512;
+  1,536-dimensional float16 embeddings; 50.589 seconds (31.865 frames/s)
+- Storage: 4,540,678 bytes compressed (2,816.8 bytes/frame)
+- Peak allocated GPU memory: 4,992,640,000 bytes
+- One-time cold model/adaptor load: 201.137 seconds, including first download
+  and construction of the SigLIP2-Giant text model; checkpoint cache lookup was
+  timed separately
+- GT Interval Hit@1/5/8/10: 0/5, 0/5, 1/5, 1/5
+- Result/artifacts: `outputs/diagnostics/cradio_v4/`
+- Complete report: `docs/reports/CRADIO_V4_SMOKE_REPORT.md`
+
+The official text adaptor worked, but all five dataset question strings are
+identical ("Which action is happening in this video clip?"). Because the task
+forbade using options, every case necessarily received the same ranking. The
+single Top-8/10 hit is the 60-second interval containing the rank-7 timestamp
+at 1109 seconds. These GT Interval metrics are coarse post-hoc temporal
+exposure diagnostics, not true evidence recall.
+
+Conclusion: compute, VRAM, and embedding storage are practical on the RTX 3090
+Ti, so C-RADIOv4 remains a technically viable candidate representation. This
+smoke does not establish it as a useful B1 scorer: generic question-only text
+provided no discriminative retrieval signal, and no B1 definition is changed.
+The DINOv2 control was skipped because the frozen DINOv2 component has no
+existing text-aligned query method; no custom mapping was invented.
+
+An initial load failed before embedding because the default user Hugging Face
+cache exceeded its quota. The successful run fixed this by placing all large
+diagnostic caches under the canonical project model storage. Transformers
+5.14.1 also emitted BOS/EOS range warnings for the official SigLIP2 config;
+inference completed without an error.
+
+## 2026-07-22 — C-RADIOv4 option-semantic follow-up
+
+**Exploratory diagnostic — not a formal B0–B4 result.** No Qwen calls were made
+and no frozen manifest, pipeline, hierarchy, or experiment definition changed.
+
+- Input: the existing 1,612-frame YKI08 C-RADIO 1 FPS embedding artifact; no
+  visual embedding recomputation
+- Query policy: all five options for each of the five frozen YKI08 questions
+  were independently ranked before GT was loaded; `None of the above` was kept
+  raw but excluded from concrete-option merging
+- Concrete-GT cohort (n=4), generic Hit@1/5/8/10/20: 0/0/1/1/1; median first
+  inside rank 58.5
+- Correct-option post-hoc upper bound: 0/2/3/3/3; median rank 5.5
+- GT-independent balanced all-options retrieval: 0/1/2/2/3; median rank 12.5
+- All-five balanced result: 0/1/2/2/3; median rank 17
+- Result: `outputs/diagnostics/cradio_v4/option_semantic/`
+
+Conclusion: action semantics materially improve this diagnostic, showing that
+the generic-question failure was mainly query-information limited. The
+correct-option result is not deployable, and the five-question one-video result
+does not define or validate formal B1.
+
+## 2026-07-22 — C-RADIOv4 versus DINOv2 representation control
+
+**Exploratory diagnostic — not a formal B0–B4 result.** The frozen DINOv2
+hierarchy was replayed unchanged in isolation and no frozen output was
+overwritten.
+
+- Input: identical YKI08 source frames and 1,612 deterministic 1 FPS timestamps
+- DINOv2: `facebook/dinov2-small`, 384-dimensional float32 CLS; 250.422 seconds
+  end-to-end (6.437 FPS), 292,911,616-byte peak allocated VRAM, 2,300,095-byte
+  artifact
+- C-RADIO: existing 1,536-dimensional float16 `siglip2-g` summary; 50.589
+  seconds (31.865 FPS), 4,992,640,000-byte peak, 4,540,678-byte artifact
+- Frozen-logic Fine/Medium counts: DINO 134/46; C-RADIO 126/40
+- Exact-threshold boundary agreement: F1 0.519 at ±1 s, 0.636 at ±2 s, and
+  0.767 at ±5 s
+- Smoothed adjacent-similarity MAD ratio: 8.49× (DINO 0.04719, C-RADIO
+  0.00556); the same 0.005 absolute floor has different effective stringency,
+  so no threshold was retuned
+- Result: `outputs/diagnostics/cradio_v4/dino_comparison/`
+- Full report: `docs/reports/CRADIO_V4_FOLLOWUP_REPORT.md`
+
+Conclusion: interpretation A fits best for now—retain DINOv2 for frozen
+temporal structure and consider C-RADIO for semantic retrieval. Similar segment
+counts on one video do not yet justify a unified C-RADIO replacement. DINO's
+measured end-to-end time was dominated by its official CPU preprocessing; its
+GPU inference and VRAM costs remained much lower.

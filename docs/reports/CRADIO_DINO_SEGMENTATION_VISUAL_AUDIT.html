@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C-RADIOv4 vs DINOv2 segmentation visual audit</title><style>
+:root { --ink:#172033; --muted:#637083; --paper:#fff; --line:#d7deea; --dino:#2474d2; --cradio:#e76f32; --shared:#7847c8; --near:#2e9b67; }
+* { box-sizing:border-box; }
+body { margin:0; background:#eef2f7; color:var(--ink); font:14px/1.45 Inter,Arial,sans-serif; }
+main { max-width:1380px; margin:auto; background:var(--paper); padding:36px 42px 64px; }
+h1 { margin:0 0 4px; font-size:30px; }
+h2 { margin-top:40px; padding-bottom:7px; border-bottom:2px solid #263a5a; }
+h3 { margin:0; font-size:16px; }
+.subtitle,.note { color:var(--muted); }
+.scope { border-left:4px solid #e2a018; background:#fff8e7; padding:10px 14px; }
+.legend { display:flex; flex-wrap:wrap; gap:16px; margin:12px 0; font-size:13px; }
+.swatch { width:12px; height:12px; display:inline-block; margin-right:5px; vertical-align:-1px; }
+.exact-bg{background:var(--shared)} .near-bg{background:var(--near)} .dino-bg{background:var(--dino)} .cradio-bg{background:var(--cradio)}
+.timeline-wrap { border:1px solid var(--line); border-radius:8px; padding:24px 16px 14px; overflow:hidden; }
+.timeline-scale { position:relative; height:28px; margin-left:90px; }
+.tick { position:absolute; top:0; transform:translateX(-50%); color:var(--muted); font-size:10px; }
+.tick i { display:block; height:9px; border-left:1px solid #9aa5b6; margin:auto; }
+.tick b { font-weight:500; }
+.timeline-row { display:flex; align-items:center; margin:10px 0; }
+.track-label { flex:0 0 86px; font-weight:700; }
+.track { position:relative; height:42px; flex:1; background:linear-gradient(#f8fafc,#edf1f6); border:1px solid var(--line); }
+.marker { position:absolute; top:0; height:100%; width:2px; opacity:.88; }
+.marker.exact{background:var(--shared);width:3px}.marker.near{background:var(--near)}.marker.dino-only{background:var(--dino)}.marker.cradio-only{background:var(--cradio)}
+.boundary-card,.segment-window { break-inside:avoid; page-break-inside:avoid; border:1px solid var(--line); border-radius:9px; margin:18px 0; padding:14px; box-shadow:0 2px 7px #15284a12; }
+.boundary-card header,.segment-window header { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+.number { border-radius:16px; padding:3px 9px; background:#223655; color:white; font-weight:700; }
+.distance,.segment-window header span { margin-left:auto; color:var(--muted); }
+.strip { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; }
+figure { margin:0; min-width:0; background:#111; }
+figure img { width:100%; display:block; aspect-ratio:16/9; object-fit:cover; }
+figcaption { color:#fff; text-align:center; font-size:11px; padding:2px; }
+.mini-ruler { position:relative; height:42px; margin-top:5px; border-top:1px solid #aeb8c7; }
+.audit-line { position:absolute; top:0; height:24px; border-left:3px solid; }
+.audit-line b { position:absolute; white-space:nowrap; top:12px; transform:translateX(-50%); font-size:10px; background:#fff; }
+.dino-line { border-color:var(--dino); color:var(--dino); }.dino-line b { top:8px; }
+.cradio-line { border-color:var(--cradio); color:var(--cradio); }.cradio-line b { top:23px; }
+.shared-line { border-color:var(--shared); color:var(--shared); }.shared-line b { top:12px; }
+.offstrip { display:inline-block; margin:7px 16px 0 0; font-size:11px; border-left:0; }
+.metrics { display:grid; grid-template-columns:1fr 1fr; gap:10px; background:#f5f7fa; padding:8px; font-size:12px; }
+.manual { margin-top:9px; padding:8px 10px; background:#fffdf3; border:1px dashed #bba964; }
+.segment-row { display:flex; align-items:stretch; margin:10px 0; }
+.segments { display:flex; flex:1; gap:3px; min-height:110px; }
+.segment { min-width:85px; border:2px solid; background:#f7f9fc; overflow:hidden; }
+.segment.dinov2 { border-color:var(--dino); }.segment.c-radio { border-color:var(--cradio); }
+.segment img { width:100%; height:72px; object-fit:cover; display:block; }
+.segment div { padding:4px; font-size:10px; }.segment small { display:block; color:var(--muted); }
+.stats { border-collapse:collapse; width:100%; margin:12px 0; }
+.stats th,.stats td { border:1px solid var(--line); padding:7px 9px; text-align:right; }
+.stats th:first-child,.stats td:first-child { text-align:left; }
+.callout { padding:12px 14px; background:#eef7ff; border-left:4px solid var(--dino); font-weight:600; }
+.existing-list { columns:2; }
+footer { margin-top:36px; color:var(--muted); font-size:12px; }
+@media print {
+  @page { size:A4 landscape; margin:9mm; }
+  body { background:white; font-size:11px; }
+  main { max-width:none; padding:0; }
+  h1 { font-size:24px; } h2 { margin-top:22px; }
+  .boundary-card,.segment-window { box-shadow:none; margin:10px 0; }
+  .strip { gap:3px; }
+  .metrics { font-size:9px; }
+  .segments { min-height:88px; }.segment img { height:54px; }
+}
+</style></head>
+<body><main>
+<h1>C-RADIOv4 vs DINOv2 segmentation visual audit</h1>
+<p class="subtitle">YKI08 · 1611.584 seconds · existing deterministic 1 FPS diagnostic replay · generated without model or segmentation recomputation</p>
+<p class="scope"><strong>Manual inspection only.</strong> This report does not decide which representation is better. Judge whether boundaries correspond to real scene/action/event changes, whether C-RADIO ignores useful fine changes, whether DINO reacts to camera/photometric motion, and which segmentation yields coherent Medium-level events.</p>
+
+<h2>A. Global timeline comparison</h2>
+<div class="legend"><span><i class="swatch exact-bg"></i>exact/shared</span><span><i class="swatch near-bg"></i>matched within ±2 s</span><span><i class="swatch dino-bg"></i>DINO-only</span><span><i class="swatch cradio-bg"></i>C-RADIO-only</span></div>
+<div class="timeline-wrap">
+    <div class="timeline-scale"><span class="tick" style="left:0.0000%"><i></i><b>0s</b></span><span class="tick" style="left:12.4102%"><i></i><b>200s</b></span><span class="tick" style="left:24.8203%"><i></i><b>400s</b></span><span class="tick" style="left:37.2305%"><i></i><b>600s</b></span><span class="tick" style="left:49.6406%"><i></i><b>800s</b></span><span class="tick" style="left:62.0508%"><i></i><b>1000s</b></span><span class="tick" style="left:74.4609%"><i></i><b>1200s</b></span><span class="tick" style="left:86.8711%"><i></i><b>1400s</b></span><span class="tick" style="left:99.2812%"><i></i><b>1600s</b></span></div>
+    <div class="timeline-row"><div class="track-label">DINOv2</div><div class="track"><span class="marker exact" style="left:0.31025%" title="DINOv2 5.0s — exact"></span><span class="marker near" style="left:1.24102%" title="DINOv2 20.0s — near"></span><span class="marker exact" style="left:1.86152%" title="DINOv2 30.0s — exact"></span><span class="marker exact" style="left:3.41279%" title="DINOv2 55.0s — exact"></span><span class="marker near" style="left:5.02611%" title="DINOv2 81.0s — near"></span><span class="marker dino-only" style="left:9.05941%" title="DINOv2 146.0s — dino-only"></span><span class="marker near" style="left:9.61787%" title="DINOv2 155.0s — near"></span><span class="marker exact" style="left:11.91374%" title="DINOv2 192.0s — exact"></span><span class="marker exact" style="left:12.47220%" title="DINOv2 201.0s — exact"></span><span class="marker near" style="left:12.84451%" title="DINOv2 207.0s — near"></span><span class="marker dino-only" style="left:13.21681%" title="DINOv2 213.0s — dino-only"></span><span class="marker exact" style="left:13.52706%" title="DINOv2 218.0s — exact"></span><span class="marker dino-only" style="left:14.51988%" title="DINOv2 234.0s — dino-only"></span><span class="marker dino-only" style="left:16.00909%" title="DINOv2 258.0s — dino-only"></span><span class="marker near" style="left:16.93986%" title="DINOv2 273.0s — near"></span><span class="marker exact" style="left:18.05677%" title="DINOv2 291.0s — exact"></span><span class="marker exact" style="left:19.29778%" title="DINOv2 311.0s — exact"></span><span class="marker exact" style="left:19.54599%" title="DINOv2 315.0s — exact"></span><span class="marker dino-only" style="left:20.16649%" title="DINOv2 325.0s — dino-only"></span><span class="marker dino-only" style="left:20.78700%" title="DINOv2 335.0s — dino-only"></span><span class="marker dino-only" style="left:21.71776%" title="DINOv2 350.0s — dino-only"></span><span class="marker near" style="left:22.27622%" title="DINOv2 359.0s — near"></span><span class="marker dino-only" style="left:22.89673%" title="DINOv2 369.0s — dino-only"></span><span class="marker near" style="left:23.20698%" title="DINOv2 374.0s — near"></span><span class="marker dino-only" style="left:23.57929%" title="DINOv2 380.0s — dino-only"></span><span class="marker dino-only" style="left:24.07569%" title="DINOv2 388.0s — dino-only"></span><span class="marker dino-only" style="left:24.69620%" title="DINOv2 398.0s — dino-only"></span><span class="marker near" style="left:25.13055%" title="DINOv2 405.0s — near"></span><span class="marker exact" style="left:25.62696%" title="DINOv2 413.0s — exact"></span><span class="marker dino-only" style="left:26.06132%" title="DINOv2 420.0s — dino-only"></span><span class="marker near" style="left:26.74387%" title="DINOv2 431.0s — near"></span><span class="marker exact" style="left:27.05413%" title="DINOv2 436.0s — exact"></span><span class="marker dino-only" style="left:27.92284%" title="DINOv2 450.0s — dino-only"></span><span class="marker near" style="left:28.48130%" title="DINOv2 459.0s — near"></span><span class="marker dino-only" style="left:28.97770%" title="DINOv2 467.0s — dino-only"></span><span class="marker dino-only" style="left:29.72231%" title="DINOv2 479.0s — dino-only"></span><span class="marker dino-only" style="left:30.21872%" title="DINOv2 487.0s — dino-only"></span><span class="marker near" style="left:30.71512%" title="DINOv2 495.0s — near"></span><span class="marker near" style="left:31.02538%" title="DINOv2 500.0s — near"></span><span class="marker dino-only" style="left:31.52178%" title="DINOv2 508.0s — dino-only"></span><span class="marker dino-only" style="left:32.14229%" title="DINOv2 518.0s — dino-only"></span><span class="marker exact" style="left:32.82485%" title="DINOv2 529.0s — exact"></span><span class="marker dino-only" style="left:33.56946%" title="DINOv2 541.0s — dino-only"></span><span class="marker near" style="left:33.81766%" title="DINOv2 545.0s — near"></span><span class="marker dino-only" style="left:34.31407%" title="DINOv2 553.0s — dino-only"></span><span class="marker near" style="left:35.49303%" title="DINOv2 572.0s — near"></span><span class="marker dino-only" style="left:36.67199%" title="DINOv2 591.0s — dino-only"></span><span class="marker dino-only" style="left:37.04430%" title="DINOv2 597.0s — dino-only"></span><span class="marker dino-only" style="left:37.35455%" title="DINOv2 602.0s — dino-only"></span><span class="marker near" style="left:39.09197%" title="DINOv2 630.0s — near"></span><span class="marker dino-only" style="left:39.40223%" title="DINOv2 635.0s — dino-only"></span><span class="marker exact" style="left:40.02274%" title="DINOv2 645.0s — exact"></span><span class="marker dino-only" style="left:41.01555%" title="DINOv2 661.0s — dino-only"></span><span class="marker near" style="left:41.51195%" title="DINOv2 669.0s — near"></span><span class="marker exact" style="left:42.93912%" title="DINOv2 692.0s — exact"></span><span class="marker dino-only" style="left:43.49758%" title="DINOv2 701.0s — dino-only"></span><span class="marker dino-only" style="left:45.23500%" title="DINOv2 729.0s — dino-only"></span><span class="marker dino-only" style="left:45.79346%" title="DINOv2 738.0s — dino-only"></span><span class="marker near" style="left:46.47601%" title="DINOv2 749.0s — near"></span><span class="marker near" style="left:46.91037%" title="DINOv2 756.0s — near"></span><span class="marker near" style="left:47.28267%" title="DINOv2 762.0s — near"></span><span class="marker dino-only" style="left:47.84113%" title="DINOv2 771.0s — dino-only"></span><span class="marker dino-only" style="left:48.33754%" title="DINOv2 779.0s — dino-only"></span><span class="marker exact" style="left:48.77189%" title="DINOv2 786.0s — exact"></span><span class="marker dino-only" style="left:49.33035%" title="DINOv2 795.0s — dino-only"></span><span class="marker exact" style="left:50.19906%" title="DINOv2 809.0s — exact"></span><span class="marker near" style="left:50.81957%" title="DINOv2 819.0s — near"></span><span class="marker dino-only" style="left:51.75033%" title="DINOv2 834.0s — dino-only"></span><span class="marker exact" style="left:52.49494%" title="DINOv2 846.0s — exact"></span><span class="marker near" style="left:53.17749%" title="DINOv2 857.0s — near"></span><span class="marker near" style="left:53.73595%" title="DINOv2 866.0s — near"></span><span class="marker dino-only" style="left:54.41851%" title="DINOv2 877.0s — dino-only"></span><span class="marker near" style="left:55.34927%" title="DINOv2 892.0s — near"></span><span class="marker dino-only" style="left:56.09388%" title="DINOv2 904.0s — dino-only"></span><span class="marker near" style="left:57.33490%" title="DINOv2 924.0s — near"></span><span class="marker near" style="left:57.95540%" title="DINOv2 934.0s — near"></span><span class="marker exact" style="left:59.63077%" title="DINOv2 961.0s — exact"></span><span class="marker exact" style="left:60.12718%" title="DINOv2 969.0s — exact"></span><span class="marker near" style="left:60.87179%" title="DINOv2 981.0s — near"></span><span class="marker near" style="left:63.16767%" title="DINOv2 1018.0s — near"></span><span class="marker dino-only" style="left:63.78817%" title="DINOv2 1028.0s — dino-only"></span><span class="marker near" style="left:64.09843%" title="DINOv2 1033.0s — near"></span><span class="marker dino-only" style="left:64.71893%" title="DINOv2 1043.0s — dino-only"></span><span class="marker dino-only" style="left:65.02919%" title="DINOv2 1048.0s — dino-only"></span><span class="marker near" style="left:65.89790%" title="DINOv2 1062.0s — near"></span><span class="marker near" style="left:66.58046%" title="DINOv2 1073.0s — near"></span><span class="marker near" style="left:67.44917%" title="DINOv2 1087.0s — near"></span><span class="marker near" style="left:67.88352%" title="DINOv2 1094.0s — near"></span><span class="marker dino-only" style="left:68.81428%" title="DINOv2 1109.0s — dino-only"></span><span class="marker near" style="left:69.49684%" title="DINOv2 1120.0s — near"></span><span class="marker exact" style="left:70.24145%" title="DINOv2 1132.0s — exact"></span><span class="marker near" style="left:71.42042%" title="DINOv2 1151.0s — near"></span><span class="marker dino-only" style="left:71.73067%" title="DINOv2 1156.0s — dino-only"></span><span class="marker near" style="left:73.46809%" title="DINOv2 1184.0s — near"></span><span class="marker exact" style="left:75.32961%" title="DINOv2 1214.0s — exact"></span><span class="marker exact" style="left:75.88807%" title="DINOv2 1223.0s — exact"></span><span class="marker dino-only" style="left:76.32243%" title="DINOv2 1230.0s — dino-only"></span><span class="marker exact" style="left:77.37729%" title="DINOv2 1247.0s — exact"></span><span class="marker exact" style="left:77.99780%" title="DINOv2 1257.0s — exact"></span><span class="marker dino-only" style="left:78.61830%" title="DINOv2 1267.0s — dino-only"></span><span class="marker exact" style="left:78.86651%" title="DINOv2 1271.0s — exact"></span><span class="marker dino-only" style="left:79.23881%" title="DINOv2 1277.0s — dino-only"></span><span class="marker dino-only" style="left:79.67317%" title="DINOv2 1284.0s — dino-only"></span><span class="marker near" style="left:80.23162%" title="DINOv2 1293.0s — near"></span><span class="marker near" style="left:80.85213%" title="DINOv2 1303.0s — near"></span><span class="marker dino-only" style="left:81.41059%" title="DINOv2 1312.0s — dino-only"></span><span class="marker near" style="left:81.84494%" title="DINOv2 1319.0s — near"></span><span class="marker near" style="left:82.40340%" title="DINOv2 1328.0s — near"></span><span class="marker near" style="left:82.89981%" title="DINOv2 1336.0s — near"></span><span class="marker exact" style="left:83.45826%" title="DINOv2 1345.0s — exact"></span><span class="marker dino-only" style="left:84.26492%" title="DINOv2 1358.0s — dino-only"></span><span class="marker near" style="left:85.44389%" title="DINOv2 1377.0s — near"></span><span class="marker near" style="left:85.75414%" title="DINOv2 1382.0s — near"></span><span class="marker dino-only" style="left:86.00234%" title="DINOv2 1386.0s — dino-only"></span><span class="marker exact" style="left:86.31260%" title="DINOv2 1391.0s — exact"></span><span class="marker dino-only" style="left:86.74695%" title="DINOv2 1398.0s — dino-only"></span><span class="marker exact" style="left:87.42951%" title="DINOv2 1409.0s — exact"></span><span class="marker dino-only" style="left:87.73976%" title="DINOv2 1414.0s — dino-only"></span><span class="marker near" style="left:88.60847%" title="DINOv2 1428.0s — near"></span><span class="marker near" style="left:89.41513%" title="DINOv2 1441.0s — near"></span><span class="marker dino-only" style="left:90.03564%" title="DINOv2 1451.0s — dino-only"></span><span class="marker exact" style="left:92.02127%" title="DINOv2 1483.0s — exact"></span><span class="marker near" style="left:92.82793%" title="DINOv2 1496.0s — near"></span><span class="marker dino-only" style="left:93.26228%" title="DINOv2 1503.0s — dino-only"></span><span class="marker near" style="left:93.69664%" title="DINOv2 1510.0s — near"></span><span class="marker near" style="left:94.13099%" title="DINOv2 1517.0s — near"></span><span class="marker near" style="left:94.62740%" title="DINOv2 1525.0s — near"></span><span class="marker near" style="left:95.30996%" title="DINOv2 1536.0s — near"></span><span class="marker exact" style="left:96.30277%" title="DINOv2 1552.0s — exact"></span><span class="marker near" style="left:96.92328%" title="DINOv2 1562.0s — near"></span><span class="marker exact" style="left:98.59865%" title="DINOv2 1589.0s — exact"></span><span class="marker dino-only" style="left:99.34325%" title="DINOv2 1601.0s — dino-only"></span><span class="marker near" style="left:99.83966%" title="DINOv2 1609.0s — near"></span></div></div>
+    <div class="timeline-row"><div class="track-label">C-RADIO</div><div class="track"><span class="marker exact" style="left:0.31025%" title="C-RADIO 5.0s — exact"></span><span class="marker near" style="left:1.17896%" title="C-RADIO 19.0s — near"></span><span class="marker exact" style="left:1.86152%" title="C-RADIO 30.0s — exact"></span><span class="marker cradio-only" style="left:2.17178%" title="C-RADIO 35.0s — cradio-only"></span><span class="marker cradio-only" style="left:2.79228%" title="C-RADIO 45.0s — cradio-only"></span><span class="marker exact" style="left:3.41279%" title="C-RADIO 55.0s — exact"></span><span class="marker cradio-only" style="left:4.28150%" title="C-RADIO 69.0s — cradio-only"></span><span class="marker near" style="left:4.96406%" title="C-RADIO 80.0s — near"></span><span class="marker cradio-only" style="left:6.45328%" title="C-RADIO 104.0s — cradio-only"></span><span class="marker cradio-only" style="left:7.44609%" title="C-RADIO 120.0s — cradio-only"></span><span class="marker cradio-only" style="left:8.81121%" title="C-RADIO 142.0s — cradio-only"></span><span class="marker near" style="left:9.55582%" title="C-RADIO 154.0s — near"></span><span class="marker cradio-only" style="left:10.79683%" title="C-RADIO 174.0s — cradio-only"></span><span class="marker cradio-only" style="left:11.10708%" title="C-RADIO 179.0s — cradio-only"></span><span class="marker cradio-only" style="left:11.54144%" title="C-RADIO 186.0s — cradio-only"></span><span class="marker exact" style="left:11.91374%" title="C-RADIO 192.0s — exact"></span><span class="marker exact" style="left:12.47220%" title="C-RADIO 201.0s — exact"></span><span class="marker near" style="left:12.96861%" title="C-RADIO 209.0s — near"></span><span class="marker exact" style="left:13.52706%" title="C-RADIO 218.0s — exact"></span><span class="marker cradio-only" style="left:14.27167%" title="C-RADIO 230.0s — cradio-only"></span><span class="marker near" style="left:17.06396%" title="C-RADIO 275.0s — near"></span><span class="marker cradio-only" style="left:17.43626%" title="C-RADIO 281.0s — cradio-only"></span><span class="marker exact" style="left:18.05677%" title="C-RADIO 291.0s — exact"></span><span class="marker cradio-only" style="left:18.67728%" title="C-RADIO 301.0s — cradio-only"></span><span class="marker exact" style="left:19.29778%" title="C-RADIO 311.0s — exact"></span><span class="marker exact" style="left:19.54599%" title="C-RADIO 315.0s — exact"></span><span class="marker cradio-only" style="left:20.60085%" title="C-RADIO 332.0s — cradio-only"></span><span class="marker near" style="left:22.40032%" title="C-RADIO 361.0s — near"></span><span class="marker near" style="left:23.33108%" title="C-RADIO 376.0s — near"></span><span class="marker near" style="left:25.19261%" title="C-RADIO 406.0s — near"></span><span class="marker exact" style="left:25.62696%" title="C-RADIO 413.0s — exact"></span><span class="marker cradio-only" style="left:26.30952%" title="C-RADIO 424.0s — cradio-only"></span><span class="marker near" style="left:26.61977%" title="C-RADIO 429.0s — near"></span><span class="marker exact" style="left:27.05413%" title="C-RADIO 436.0s — exact"></span><span class="marker cradio-only" style="left:27.73669%" title="C-RADIO 447.0s — cradio-only"></span><span class="marker near" style="left:28.60540%" title="C-RADIO 461.0s — near"></span><span class="marker cradio-only" style="left:29.97051%" title="C-RADIO 483.0s — cradio-only"></span><span class="marker near" style="left:30.65307%" title="C-RADIO 494.0s — near"></span><span class="marker near" style="left:30.96333%" title="C-RADIO 499.0s — near"></span><span class="marker exact" style="left:32.82485%" title="C-RADIO 529.0s — exact"></span><span class="marker cradio-only" style="left:33.25920%" title="C-RADIO 536.0s — cradio-only"></span><span class="marker near" style="left:33.75561%" title="C-RADIO 544.0s — near"></span><span class="marker near" style="left:35.55508%" title="C-RADIO 573.0s — near"></span><span class="marker cradio-only" style="left:38.16121%" title="C-RADIO 615.0s — cradio-only"></span><span class="marker near" style="left:39.15402%" title="C-RADIO 631.0s — near"></span><span class="marker exact" style="left:40.02274%" title="C-RADIO 645.0s — exact"></span><span class="marker cradio-only" style="left:40.64324%" title="C-RADIO 655.0s — cradio-only"></span><span class="marker near" style="left:41.44990%" title="C-RADIO 668.0s — near"></span><span class="marker exact" style="left:42.93912%" title="C-RADIO 692.0s — exact"></span><span class="marker cradio-only" style="left:44.55244%" title="C-RADIO 718.0s — cradio-only"></span><span class="marker cradio-only" style="left:45.42115%" title="C-RADIO 732.0s — cradio-only"></span><span class="marker near" style="left:46.35191%" title="C-RADIO 747.0s — near"></span><span class="marker near" style="left:46.84832%" title="C-RADIO 755.0s — near"></span><span class="marker near" style="left:47.40677%" title="C-RADIO 764.0s — near"></span><span class="marker exact" style="left:48.77189%" title="C-RADIO 786.0s — exact"></span><span class="marker cradio-only" style="left:49.51650%" title="C-RADIO 798.0s — cradio-only"></span><span class="marker exact" style="left:50.19906%" title="C-RADIO 809.0s — exact"></span><span class="marker near" style="left:50.88162%" title="C-RADIO 820.0s — near"></span><span class="marker cradio-only" style="left:51.25392%" title="C-RADIO 826.0s — cradio-only"></span><span class="marker cradio-only" style="left:51.56418%" title="C-RADIO 831.0s — cradio-only"></span><span class="marker exact" style="left:52.49494%" title="C-RADIO 846.0s — exact"></span><span class="marker cradio-only" style="left:52.86724%" title="C-RADIO 852.0s — cradio-only"></span><span class="marker near" style="left:53.23955%" title="C-RADIO 858.0s — near"></span><span class="marker near" style="left:53.79800%" title="C-RADIO 867.0s — near"></span><span class="marker cradio-only" style="left:54.72876%" title="C-RADIO 882.0s — cradio-only"></span><span class="marker near" style="left:55.22517%" title="C-RADIO 890.0s — near"></span><span class="marker cradio-only" style="left:56.40413%" title="C-RADIO 909.0s — cradio-only"></span><span class="marker near" style="left:57.27284%" title="C-RADIO 923.0s — near"></span><span class="marker near" style="left:58.01745%" title="C-RADIO 935.0s — near"></span><span class="marker cradio-only" style="left:58.88616%" title="C-RADIO 949.0s — cradio-only"></span><span class="marker exact" style="left:59.63077%" title="C-RADIO 961.0s — exact"></span><span class="marker exact" style="left:60.12718%" title="C-RADIO 969.0s — exact"></span><span class="marker near" style="left:60.74769%" title="C-RADIO 979.0s — near"></span><span class="marker cradio-only" style="left:61.11999%" title="C-RADIO 985.0s — cradio-only"></span><span class="marker cradio-only" style="left:62.54716%" title="C-RADIO 1008.0s — cradio-only"></span><span class="marker near" style="left:63.10562%" title="C-RADIO 1017.0s — near"></span><span class="marker near" style="left:64.03638%" title="C-RADIO 1032.0s — near"></span><span class="marker near" style="left:65.95995%" title="C-RADIO 1063.0s — near"></span><span class="marker near" style="left:66.51841%" title="C-RADIO 1072.0s — near"></span><span class="marker cradio-only" style="left:67.07686%" title="C-RADIO 1081.0s — cradio-only"></span><span class="marker near" style="left:67.38712%" title="C-RADIO 1086.0s — near"></span><span class="marker near" style="left:67.82147%" title="C-RADIO 1093.0s — near"></span><span class="marker cradio-only" style="left:68.62813%" title="C-RADIO 1106.0s — cradio-only"></span><span class="marker cradio-only" style="left:69.18659%" title="C-RADIO 1115.0s — cradio-only"></span><span class="marker near" style="left:69.62094%" title="C-RADIO 1122.0s — near"></span><span class="marker exact" style="left:70.24145%" title="C-RADIO 1132.0s — exact"></span><span class="marker cradio-only" style="left:70.55171%" title="C-RADIO 1137.0s — cradio-only"></span><span class="marker near" style="left:71.35837%" title="C-RADIO 1150.0s — near"></span><span class="marker cradio-only" style="left:72.28913%" title="C-RADIO 1165.0s — cradio-only"></span><span class="marker near" style="left:73.40604%" title="C-RADIO 1183.0s — near"></span><span class="marker cradio-only" style="left:74.77116%" title="C-RADIO 1205.0s — cradio-only"></span><span class="marker exact" style="left:75.32961%" title="C-RADIO 1214.0s — exact"></span><span class="marker exact" style="left:75.88807%" title="C-RADIO 1223.0s — exact"></span><span class="marker cradio-only" style="left:76.13627%" title="C-RADIO 1227.0s — cradio-only"></span><span class="marker exact" style="left:77.37729%" title="C-RADIO 1247.0s — exact"></span><span class="marker exact" style="left:77.99780%" title="C-RADIO 1257.0s — exact"></span><span class="marker exact" style="left:78.86651%" title="C-RADIO 1271.0s — exact"></span><span class="marker near" style="left:80.29367%" title="C-RADIO 1294.0s — near"></span><span class="marker near" style="left:80.72803%" title="C-RADIO 1301.0s — near"></span><span class="marker cradio-only" style="left:81.22444%" title="C-RADIO 1309.0s — cradio-only"></span><span class="marker near" style="left:81.78289%" title="C-RADIO 1318.0s — near"></span><span class="marker near" style="left:82.34135%" title="C-RADIO 1327.0s — near"></span><span class="marker near" style="left:83.02391%" title="C-RADIO 1338.0s — near"></span><span class="marker exact" style="left:83.45826%" title="C-RADIO 1345.0s — exact"></span><span class="marker cradio-only" style="left:84.51312%" title="C-RADIO 1362.0s — cradio-only"></span><span class="marker cradio-only" style="left:85.19568%" title="C-RADIO 1373.0s — cradio-only"></span><span class="marker near" style="left:85.50594%" title="C-RADIO 1378.0s — near"></span><span class="marker near" style="left:85.81619%" title="C-RADIO 1383.0s — near"></span><span class="marker exact" style="left:86.31260%" title="C-RADIO 1391.0s — exact"></span><span class="marker cradio-only" style="left:87.05721%" title="C-RADIO 1403.0s — cradio-only"></span><span class="marker exact" style="left:87.42951%" title="C-RADIO 1409.0s — exact"></span><span class="marker near" style="left:88.67053%" title="C-RADIO 1429.0s — near"></span><span class="marker near" style="left:89.53924%" title="C-RADIO 1443.0s — near"></span><span class="marker exact" style="left:92.02127%" title="C-RADIO 1483.0s — exact"></span><span class="marker near" style="left:92.88998%" title="C-RADIO 1497.0s — near"></span><span class="marker near" style="left:93.75869%" title="C-RADIO 1511.0s — near"></span><span class="marker near" style="left:94.06894%" title="C-RADIO 1516.0s — near"></span><span class="marker near" style="left:94.56535%" title="C-RADIO 1524.0s — near"></span><span class="marker cradio-only" style="left:94.81355%" title="C-RADIO 1528.0s — cradio-only"></span><span class="marker near" style="left:95.37201%" title="C-RADIO 1537.0s — near"></span><span class="marker exact" style="left:96.30277%" title="C-RADIO 1552.0s — exact"></span><span class="marker near" style="left:96.79917%" title="C-RADIO 1560.0s — near"></span><span class="marker cradio-only" style="left:97.29558%" title="C-RADIO 1568.0s — cradio-only"></span><span class="marker exact" style="left:98.59865%" title="C-RADIO 1589.0s — exact"></span><span class="marker near" style="left:99.90171%" title="C-RADIO 1610.0s — near"></span></div></div>
+    </div>
+<p class="note">Markers are all existing Fine boundaries. “Only” means unmatched by the deterministic one-to-one ±2 s comparison; it is not a correctness label.</p>
+
+<h2>B. Side-by-side boundary examples</h2>
+<p>Twenty deterministic examples: four exact strong shared, four shared with 1–2 s displacement, four strong DINO-only, four strong C-RADIO-only, and four additional >5 s disagreement anchors. Seven source frames around each anchor provide ±3 s context.</p>
+
+    <article class="boundary-card" id="example-1">
+      <header><span class="number">#01</span><h3>strong shared — exact</h3><span class="distance">nearest distance 0.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_1342p000.jpg" alt="YKI08 at 1342.0 seconds"><figcaption>1342.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1343p000.jpg" alt="YKI08 at 1343.0 seconds"><figcaption>1343.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1344p000.jpg" alt="YKI08 at 1344.0 seconds"><figcaption>1344.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1345p000.jpg" alt="YKI08 at 1345.0 seconds"><figcaption>1345.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1346p000.jpg" alt="YKI08 at 1346.0 seconds"><figcaption>1346.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1347p000.jpg" alt="YKI08 at 1347.0 seconds"><figcaption>1347.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1348p000.jpg" alt="YKI08 at 1348.0 seconds"><figcaption>1348.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line shared-line" style="left:50.000%"><b>DINO + C-RADIO 1345.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 1345.0s · strength 0.5745 · raw cosine 0.3896 · smoothed cosine 0.4255</div><div><strong>C-RADIO</strong> boundary 1345.0s · strength 0.1062 · raw cosine 0.8376 · smoothed cosine 0.8938</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-2">
+      <header><span class="number">#02</span><h3>strong shared — exact</h3><span class="distance">nearest distance 0.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0312p000.jpg" alt="YKI08 at 312.0 seconds"><figcaption>312.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0313p000.jpg" alt="YKI08 at 313.0 seconds"><figcaption>313.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0314p000.jpg" alt="YKI08 at 314.0 seconds"><figcaption>314.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0315p000.jpg" alt="YKI08 at 315.0 seconds"><figcaption>315.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0316p000.jpg" alt="YKI08 at 316.0 seconds"><figcaption>316.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0317p000.jpg" alt="YKI08 at 317.0 seconds"><figcaption>317.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0318p000.jpg" alt="YKI08 at 318.0 seconds"><figcaption>318.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line shared-line" style="left:50.000%"><b>DINO + C-RADIO 315.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 315.0s · strength 0.5417 · raw cosine 0.3057 · smoothed cosine 0.4583</div><div><strong>C-RADIO</strong> boundary 315.0s · strength 0.0759 · raw cosine 0.8939 · smoothed cosine 0.9241</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-3">
+      <header><span class="number">#03</span><h3>strong shared — exact</h3><span class="distance">nearest distance 0.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0002p000.jpg" alt="YKI08 at 2.0 seconds"><figcaption>2.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0003p000.jpg" alt="YKI08 at 3.0 seconds"><figcaption>3.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0004p000.jpg" alt="YKI08 at 4.0 seconds"><figcaption>4.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0005p000.jpg" alt="YKI08 at 5.0 seconds"><figcaption>5.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0006p000.jpg" alt="YKI08 at 6.0 seconds"><figcaption>6.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0007p000.jpg" alt="YKI08 at 7.0 seconds"><figcaption>7.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0008p000.jpg" alt="YKI08 at 8.0 seconds"><figcaption>8.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line shared-line" style="left:50.000%"><b>DINO + C-RADIO 5.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 5.0s · strength 0.5252 · raw cosine 0.5685 · smoothed cosine 0.4748</div><div><strong>C-RADIO</strong> boundary 5.0s · strength 0.0921 · raw cosine 0.9232 · smoothed cosine 0.9079</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-4">
+      <header><span class="number">#04</span><h3>strong shared — exact</h3><span class="distance">nearest distance 0.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_1220p000.jpg" alt="YKI08 at 1220.0 seconds"><figcaption>1220.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1221p000.jpg" alt="YKI08 at 1221.0 seconds"><figcaption>1221.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1222p000.jpg" alt="YKI08 at 1222.0 seconds"><figcaption>1222.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1223p000.jpg" alt="YKI08 at 1223.0 seconds"><figcaption>1223.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1224p000.jpg" alt="YKI08 at 1224.0 seconds"><figcaption>1224.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1225p000.jpg" alt="YKI08 at 1225.0 seconds"><figcaption>1225.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1226p000.jpg" alt="YKI08 at 1226.0 seconds"><figcaption>1226.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line shared-line" style="left:50.000%"><b>DINO + C-RADIO 1223.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 1223.0s · strength 0.4898 · raw cosine 0.3629 · smoothed cosine 0.5102</div><div><strong>C-RADIO</strong> boundary 1223.0s · strength 0.0545 · raw cosine 0.9173 · smoothed cosine 0.9455</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-5">
+      <header><span class="number">#05</span><h3>shared — 1–2 s disagreement</h3><span class="distance">nearest distance 1.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_1091p000.jpg" alt="YKI08 at 1091.0 seconds"><figcaption>1091.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1092p000.jpg" alt="YKI08 at 1092.0 seconds"><figcaption>1092.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1093p000.jpg" alt="YKI08 at 1093.0 seconds"><figcaption>1093.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1094p000.jpg" alt="YKI08 at 1094.0 seconds"><figcaption>1094.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1095p000.jpg" alt="YKI08 at 1095.0 seconds"><figcaption>1095.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1096p000.jpg" alt="YKI08 at 1096.0 seconds"><figcaption>1096.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1097p000.jpg" alt="YKI08 at 1097.0 seconds"><figcaption>1097.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:50.000%"><b>DINO 1094.0s</b></span><span class="audit-line cradio-line" style="left:33.333%"><b>C-RADIO 1093.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 1094.0s · strength 0.6667 · raw cosine 0.2554 · smoothed cosine 0.3333</div><div><strong>C-RADIO</strong> boundary 1093.0s · strength 0.1000 · raw cosine 0.8809 · smoothed cosine 0.9000</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-6">
+      <header><span class="number">#06</span><h3>shared — 1–2 s disagreement</h3><span class="distance">nearest distance 2.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_1299p000.jpg" alt="YKI08 at 1299.0 seconds"><figcaption>1299.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1300p000.jpg" alt="YKI08 at 1300.0 seconds"><figcaption>1300.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1301p000.jpg" alt="YKI08 at 1301.0 seconds"><figcaption>1301.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1302p000.jpg" alt="YKI08 at 1302.0 seconds"><figcaption>1302.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1303p000.jpg" alt="YKI08 at 1303.0 seconds"><figcaption>1303.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1304p000.jpg" alt="YKI08 at 1304.0 seconds"><figcaption>1304.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1305p000.jpg" alt="YKI08 at 1305.0 seconds"><figcaption>1305.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:66.667%"><b>DINO 1303.0s</b></span><span class="audit-line cradio-line" style="left:33.333%"><b>C-RADIO 1301.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 1303.0s · strength 0.5379 · raw cosine 0.3191 · smoothed cosine 0.4621</div><div><strong>C-RADIO</strong> boundary 1301.0s · strength 0.0692 · raw cosine 0.9043 · smoothed cosine 0.9308</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-7">
+      <header><span class="number">#07</span><h3>shared — 1–2 s disagreement</h3><span class="distance">nearest distance 1.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_1069p000.jpg" alt="YKI08 at 1069.0 seconds"><figcaption>1069.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1070p000.jpg" alt="YKI08 at 1070.0 seconds"><figcaption>1070.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1071p000.jpg" alt="YKI08 at 1071.0 seconds"><figcaption>1071.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1072p000.jpg" alt="YKI08 at 1072.0 seconds"><figcaption>1072.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1073p000.jpg" alt="YKI08 at 1073.0 seconds"><figcaption>1073.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1074p000.jpg" alt="YKI08 at 1074.0 seconds"><figcaption>1074.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1075p000.jpg" alt="YKI08 at 1075.0 seconds"><figcaption>1075.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:66.667%"><b>DINO 1073.0s</b></span><span class="audit-line cradio-line" style="left:50.000%"><b>C-RADIO 1072.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 1073.0s · strength 0.5233 · raw cosine 0.3628 · smoothed cosine 0.4767</div><div><strong>C-RADIO</strong> boundary 1072.0s · strength 0.0671 · raw cosine 0.9093 · smoothed cosine 0.9329</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-8">
+      <header><span class="number">#08</span><h3>shared — 1–2 s disagreement</h3><span class="distance">nearest distance 2.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_1118p000.jpg" alt="YKI08 at 1118.0 seconds"><figcaption>1118.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1119p000.jpg" alt="YKI08 at 1119.0 seconds"><figcaption>1119.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1120p000.jpg" alt="YKI08 at 1120.0 seconds"><figcaption>1120.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1121p000.jpg" alt="YKI08 at 1121.0 seconds"><figcaption>1121.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1122p000.jpg" alt="YKI08 at 1122.0 seconds"><figcaption>1122.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1123p000.jpg" alt="YKI08 at 1123.0 seconds"><figcaption>1123.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1124p000.jpg" alt="YKI08 at 1124.0 seconds"><figcaption>1124.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:33.333%"><b>DINO 1120.0s</b></span><span class="audit-line cradio-line" style="left:66.667%"><b>C-RADIO 1122.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 1120.0s · strength 0.4866 · raw cosine 0.4879 · smoothed cosine 0.5134</div><div><strong>C-RADIO</strong> boundary 1122.0s · strength 0.0645 · raw cosine 0.9246 · smoothed cosine 0.9355</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-9">
+      <header><span class="number">#09</span><h3>DINO-only strong (&gt;5 s to C-RADIO)</h3><span class="distance">nearest distance 7.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0366p000.jpg" alt="YKI08 at 366.0 seconds"><figcaption>366.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0367p000.jpg" alt="YKI08 at 367.0 seconds"><figcaption>367.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0368p000.jpg" alt="YKI08 at 368.0 seconds"><figcaption>368.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0369p000.jpg" alt="YKI08 at 369.0 seconds"><figcaption>369.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0370p000.jpg" alt="YKI08 at 370.0 seconds"><figcaption>370.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0371p000.jpg" alt="YKI08 at 371.0 seconds"><figcaption>371.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0372p000.jpg" alt="YKI08 at 372.0 seconds"><figcaption>372.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:50.000%"><b>DINO 369.0s</b></span><span class="offstrip cradio-line">C-RADIO nearest 376.0s → outside strip</span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 369.0s · strength 0.3086 · raw cosine 0.6974 · smoothed cosine 0.6914</div><div><strong>C-RADIO</strong> boundary 376.0s · strength 0.0182 · raw cosine 0.9846 · smoothed cosine 0.9818</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-10">
+      <header><span class="number">#10</span><h3>DINO-only strong (&gt;5 s to C-RADIO)</h3><span class="distance">nearest distance 12.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0385p000.jpg" alt="YKI08 at 385.0 seconds"><figcaption>385.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0386p000.jpg" alt="YKI08 at 386.0 seconds"><figcaption>386.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0387p000.jpg" alt="YKI08 at 387.0 seconds"><figcaption>387.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0388p000.jpg" alt="YKI08 at 388.0 seconds"><figcaption>388.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0389p000.jpg" alt="YKI08 at 389.0 seconds"><figcaption>389.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0390p000.jpg" alt="YKI08 at 390.0 seconds"><figcaption>390.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0391p000.jpg" alt="YKI08 at 391.0 seconds"><figcaption>391.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:50.000%"><b>DINO 388.0s</b></span><span class="offstrip cradio-line">C-RADIO nearest 376.0s ← outside strip</span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 388.0s · strength 0.2969 · raw cosine 0.6079 · smoothed cosine 0.7031</div><div><strong>C-RADIO</strong> boundary 376.0s · strength 0.0182 · raw cosine 0.9846 · smoothed cosine 0.9818</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-11">
+      <header><span class="number">#11</span><h3>DINO-only strong (&gt;5 s to C-RADIO)</h3><span class="distance">nearest distance 6.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0464p000.jpg" alt="YKI08 at 464.0 seconds"><figcaption>464.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0465p000.jpg" alt="YKI08 at 465.0 seconds"><figcaption>465.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0466p000.jpg" alt="YKI08 at 466.0 seconds"><figcaption>466.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0467p000.jpg" alt="YKI08 at 467.0 seconds"><figcaption>467.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0468p000.jpg" alt="YKI08 at 468.0 seconds"><figcaption>468.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0469p000.jpg" alt="YKI08 at 469.0 seconds"><figcaption>469.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0470p000.jpg" alt="YKI08 at 470.0 seconds"><figcaption>470.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:50.000%"><b>DINO 467.0s</b></span><span class="offstrip cradio-line">C-RADIO nearest 461.0s ← outside strip</span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 467.0s · strength 0.2857 · raw cosine 0.6403 · smoothed cosine 0.7143</div><div><strong>C-RADIO</strong> boundary 461.0s · strength 0.0260 · raw cosine 0.9696 · smoothed cosine 0.9740</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-12">
+      <header><span class="number">#12</span><h3>DINO-only strong (&gt;5 s to C-RADIO)</h3><span class="distance">nearest distance 8.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0395p000.jpg" alt="YKI08 at 395.0 seconds"><figcaption>395.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0396p000.jpg" alt="YKI08 at 396.0 seconds"><figcaption>396.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0397p000.jpg" alt="YKI08 at 397.0 seconds"><figcaption>397.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0398p000.jpg" alt="YKI08 at 398.0 seconds"><figcaption>398.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0399p000.jpg" alt="YKI08 at 399.0 seconds"><figcaption>399.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0400p000.jpg" alt="YKI08 at 400.0 seconds"><figcaption>400.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0401p000.jpg" alt="YKI08 at 401.0 seconds"><figcaption>401.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:50.000%"><b>DINO 398.0s</b></span><span class="offstrip cradio-line">C-RADIO nearest 406.0s → outside strip</span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 398.0s · strength 0.2854 · raw cosine 0.6364 · smoothed cosine 0.7146</div><div><strong>C-RADIO</strong> boundary 406.0s · strength 0.0261 · raw cosine 0.9600 · smoothed cosine 0.9739</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-13">
+      <header><span class="number">#13</span><h3>C-RADIO-only strong (&gt;5 s to DINO)</h3><span class="distance">nearest distance 6.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0183p000.jpg" alt="YKI08 at 183.0 seconds"><figcaption>183.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0184p000.jpg" alt="YKI08 at 184.0 seconds"><figcaption>184.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0185p000.jpg" alt="YKI08 at 185.0 seconds"><figcaption>185.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0186p000.jpg" alt="YKI08 at 186.0 seconds"><figcaption>186.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0187p000.jpg" alt="YKI08 at 187.0 seconds"><figcaption>187.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0188p000.jpg" alt="YKI08 at 188.0 seconds"><figcaption>188.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0189p000.jpg" alt="YKI08 at 189.0 seconds"><figcaption>189.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="offstrip dino-line">DINO nearest 192.0s → outside strip</span><span class="audit-line cradio-line" style="left:50.000%"><b>C-RADIO 186.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 192.0s · strength 0.2510 · raw cosine 0.6986 · smoothed cosine 0.7490</div><div><strong>C-RADIO</strong> boundary 186.0s · strength 0.0423 · raw cosine 0.9285 · smoothed cosine 0.9577</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-14">
+      <header><span class="number">#14</span><h3>C-RADIO-only strong (&gt;5 s to DINO)</h3><span class="distance">nearest distance 6.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_1078p000.jpg" alt="YKI08 at 1078.0 seconds"><figcaption>1078.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1079p000.jpg" alt="YKI08 at 1079.0 seconds"><figcaption>1079.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1080p000.jpg" alt="YKI08 at 1080.0 seconds"><figcaption>1080.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1081p000.jpg" alt="YKI08 at 1081.0 seconds"><figcaption>1081.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1082p000.jpg" alt="YKI08 at 1082.0 seconds"><figcaption>1082.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1083p000.jpg" alt="YKI08 at 1083.0 seconds"><figcaption>1083.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_1084p000.jpg" alt="YKI08 at 1084.0 seconds"><figcaption>1084.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="offstrip dino-line">DINO nearest 1087.0s → outside strip</span><span class="audit-line cradio-line" style="left:50.000%"><b>C-RADIO 1081.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 1087.0s · strength 0.4886 · raw cosine 0.4432 · smoothed cosine 0.5114</div><div><strong>C-RADIO</strong> boundary 1081.0s · strength 0.0356 · raw cosine 0.9627 · smoothed cosine 0.9644</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-15">
+      <header><span class="number">#15</span><h3>C-RADIO-only strong (&gt;5 s to DINO)</h3><span class="distance">nearest distance 10.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0298p000.jpg" alt="YKI08 at 298.0 seconds"><figcaption>298.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0299p000.jpg" alt="YKI08 at 299.0 seconds"><figcaption>299.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0300p000.jpg" alt="YKI08 at 300.0 seconds"><figcaption>300.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0301p000.jpg" alt="YKI08 at 301.0 seconds"><figcaption>301.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0302p000.jpg" alt="YKI08 at 302.0 seconds"><figcaption>302.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0303p000.jpg" alt="YKI08 at 303.0 seconds"><figcaption>303.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0304p000.jpg" alt="YKI08 at 304.0 seconds"><figcaption>304.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="offstrip dino-line">DINO nearest 291.0s ← outside strip</span><span class="audit-line cradio-line" style="left:50.000%"><b>C-RADIO 301.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 291.0s · strength 0.3102 · raw cosine 0.6925 · smoothed cosine 0.6898</div><div><strong>C-RADIO</strong> boundary 301.0s · strength 0.0348 · raw cosine 0.9607 · smoothed cosine 0.9652</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-16">
+      <header><span class="number">#16</span><h3>C-RADIO-only strong (&gt;5 s to DINO)</h3><span class="distance">nearest distance 18.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0171p000.jpg" alt="YKI08 at 171.0 seconds"><figcaption>171.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0172p000.jpg" alt="YKI08 at 172.0 seconds"><figcaption>172.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0173p000.jpg" alt="YKI08 at 173.0 seconds"><figcaption>173.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0174p000.jpg" alt="YKI08 at 174.0 seconds"><figcaption>174.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0175p000.jpg" alt="YKI08 at 175.0 seconds"><figcaption>175.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0176p000.jpg" alt="YKI08 at 176.0 seconds"><figcaption>176.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0177p000.jpg" alt="YKI08 at 177.0 seconds"><figcaption>177.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="offstrip dino-line">DINO nearest 192.0s → outside strip</span><span class="audit-line cradio-line" style="left:50.000%"><b>C-RADIO 174.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 192.0s · strength 0.2510 · raw cosine 0.6986 · smoothed cosine 0.7490</div><div><strong>C-RADIO</strong> boundary 174.0s · strength 0.0282 · raw cosine 0.9657 · smoothed cosine 0.9718</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-17">
+      <header><span class="number">#17</span><h3>&gt;5 s disagreement — DINO anchor</h3><span class="distance">nearest distance 7.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0322p000.jpg" alt="YKI08 at 322.0 seconds"><figcaption>322.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0323p000.jpg" alt="YKI08 at 323.0 seconds"><figcaption>323.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0324p000.jpg" alt="YKI08 at 324.0 seconds"><figcaption>324.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0325p000.jpg" alt="YKI08 at 325.0 seconds"><figcaption>325.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0326p000.jpg" alt="YKI08 at 326.0 seconds"><figcaption>326.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0327p000.jpg" alt="YKI08 at 327.0 seconds"><figcaption>327.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0328p000.jpg" alt="YKI08 at 328.0 seconds"><figcaption>328.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:50.000%"><b>DINO 325.0s</b></span><span class="offstrip cradio-line">C-RADIO nearest 332.0s → outside strip</span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 325.0s · strength 0.2790 · raw cosine 0.6601 · smoothed cosine 0.7210</div><div><strong>C-RADIO</strong> boundary 332.0s · strength 0.0267 · raw cosine 0.9776 · smoothed cosine 0.9733</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-18">
+      <header><span class="number">#18</span><h3>&gt;5 s disagreement — DINO anchor</h3><span class="distance">nearest distance 6.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0735p000.jpg" alt="YKI08 at 735.0 seconds"><figcaption>735.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0736p000.jpg" alt="YKI08 at 736.0 seconds"><figcaption>736.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0737p000.jpg" alt="YKI08 at 737.0 seconds"><figcaption>737.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0738p000.jpg" alt="YKI08 at 738.0 seconds"><figcaption>738.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0739p000.jpg" alt="YKI08 at 739.0 seconds"><figcaption>739.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0740p000.jpg" alt="YKI08 at 740.0 seconds"><figcaption>740.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0741p000.jpg" alt="YKI08 at 741.0 seconds"><figcaption>741.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="audit-line dino-line" style="left:50.000%"><b>DINO 738.0s</b></span><span class="offstrip cradio-line">C-RADIO nearest 732.0s ← outside strip</span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 738.0s · strength 0.2701 · raw cosine 0.6999 · smoothed cosine 0.7299</div><div><strong>C-RADIO</strong> boundary 732.0s · strength 0.0276 · raw cosine 0.9702 · smoothed cosine 0.9724</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-19">
+      <header><span class="number">#19</span><h3>&gt;5 s disagreement — C-RADIO anchor</h3><span class="distance">nearest distance 13.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0612p000.jpg" alt="YKI08 at 612.0 seconds"><figcaption>612.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0613p000.jpg" alt="YKI08 at 613.0 seconds"><figcaption>613.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0614p000.jpg" alt="YKI08 at 614.0 seconds"><figcaption>614.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0615p000.jpg" alt="YKI08 at 615.0 seconds"><figcaption>615.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0616p000.jpg" alt="YKI08 at 616.0 seconds"><figcaption>616.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0617p000.jpg" alt="YKI08 at 617.0 seconds"><figcaption>617.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0618p000.jpg" alt="YKI08 at 618.0 seconds"><figcaption>618.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="offstrip dino-line">DINO nearest 602.0s ← outside strip</span><span class="audit-line cradio-line" style="left:50.000%"><b>C-RADIO 615.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 602.0s · strength 0.2231 · raw cosine 0.7022 · smoothed cosine 0.7769</div><div><strong>C-RADIO</strong> boundary 615.0s · strength 0.0274 · raw cosine 0.9684 · smoothed cosine 0.9726</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+    <article class="boundary-card" id="example-20">
+      <header><span class="number">#20</span><h3>&gt;5 s disagreement — C-RADIO anchor</h3><span class="distance">nearest distance 12.0s</span></header>
+      <div class="strip"><figure><img src="assets/cradio_dino_segmentation_audit/frame_0066p000.jpg" alt="YKI08 at 66.0 seconds"><figcaption>66.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0067p000.jpg" alt="YKI08 at 67.0 seconds"><figcaption>67.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0068p000.jpg" alt="YKI08 at 68.0 seconds"><figcaption>68.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0069p000.jpg" alt="YKI08 at 69.0 seconds"><figcaption>69.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0070p000.jpg" alt="YKI08 at 70.0 seconds"><figcaption>70.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0071p000.jpg" alt="YKI08 at 71.0 seconds"><figcaption>71.0s</figcaption></figure><figure><img src="assets/cradio_dino_segmentation_audit/frame_0072p000.jpg" alt="YKI08 at 72.0 seconds"><figcaption>72.0s</figcaption></figure></div>
+      <div class="mini-ruler"><span class="offstrip dino-line">DINO nearest 81.0s → outside strip</span><span class="audit-line cradio-line" style="left:50.000%"><b>C-RADIO 69.0s</b></span></div>
+      <div class="metrics"><div><strong>DINOv2</strong> boundary 81.0s · strength 0.2421 · raw cosine 0.7195 · smoothed cosine 0.7579</div><div><strong>C-RADIO</strong> boundary 69.0s · strength 0.0268 · raw cosine 0.9624 · smoothed cosine 0.9732</div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO more reasonable &nbsp; □ C-RADIO more reasonable &nbsp; □ both reasonable &nbsp; □ neither / ambiguous</div>
+    </article>
+    
+
+<h2>C. Segment-level comparison</h2>
+<p>Six representative windows cover both models' longest and shortest Fine segments and windows where either method splits more often. Each box reports the full segment interval/duration and displays its existing representative timestamp frame. Boxes are clipped visually to the selected window but labels retain full boundaries.</p>
+
+    <article class="segment-window">
+      <header><h3>Longest DINO Fine segment context</h3><span>73.5–153.5s</span></header>
+      <div class="segment-row"><div class="track-label">DINOv2</div><div class="segments" data-window-width="80.0">
+        <div class="segment dinov2" style="flex:7.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0068p000.jpg" alt="DINOv2 segment representative at 68.0s">
+          <div><b>55.0–81.0s</b><small>26.0s · rep 68.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:65.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0113p000.jpg" alt="DINOv2 segment representative at 113.0s">
+          <div><b>81.0–146.0s</b><small>65.0s · rep 113.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:7.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0150p000.jpg" alt="DINOv2 segment representative at 150.0s">
+          <div><b>146.0–155.0s</b><small>9.0s · rep 150.0s</small></div>
+        </div></div></div>
+      <div class="segment-row"><div class="track-label">C-RADIO</div><div class="segments" data-window-width="80.0">
+        <div class="segment c-radio" style="flex:6.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0074p000.jpg" alt="C-RADIO segment representative at 74.0s">
+          <div><b>69.0–80.0s</b><small>11.0s · rep 74.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:24.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0092p000.jpg" alt="C-RADIO segment representative at 92.0s">
+          <div><b>80.0–104.0s</b><small>24.0s · rep 92.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:16.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0112p000.jpg" alt="C-RADIO segment representative at 112.0s">
+          <div><b>104.0–120.0s</b><small>16.0s · rep 112.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:22.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0131p000.jpg" alt="C-RADIO segment representative at 131.0s">
+          <div><b>120.0–142.0s</b><small>22.0s · rep 131.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:11.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0148p000.jpg" alt="C-RADIO segment representative at 148.0s">
+          <div><b>142.0–154.0s</b><small>12.0s · rep 148.0s</small></div>
+        </div></div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO events more coherent &nbsp; □ C-RADIO events more coherent &nbsp; □ comparable &nbsp; □ ambiguous</div>
+    </article>
+    
+    <article class="segment-window">
+      <header><h3>Longest C-RADIO Fine segment context</h3><span>217.5–287.5s</span></header>
+      <div class="segment-row"><div class="track-label">DINOv2</div><div class="segments" data-window-width="70.0">
+        <div class="segment dinov2" style="flex:0.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0215p000.jpg" alt="DINOv2 segment representative at 215.0s">
+          <div><b>213.0–218.0s</b><small>5.0s · rep 215.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:16.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0226p000.jpg" alt="DINOv2 segment representative at 226.0s">
+          <div><b>218.0–234.0s</b><small>16.0s · rep 226.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:24.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0246p000.jpg" alt="DINOv2 segment representative at 246.0s">
+          <div><b>234.0–258.0s</b><small>24.0s · rep 246.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:15.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0265p000.jpg" alt="DINOv2 segment representative at 265.0s">
+          <div><b>258.0–273.0s</b><small>15.0s · rep 265.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:14.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0282p000.jpg" alt="DINOv2 segment representative at 282.0s">
+          <div><b>273.0–291.0s</b><small>18.0s · rep 282.0s</small></div>
+        </div></div></div>
+      <div class="segment-row"><div class="track-label">C-RADIO</div><div class="segments" data-window-width="70.0">
+        <div class="segment c-radio" style="flex:0.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0213p000.jpg" alt="C-RADIO segment representative at 213.0s">
+          <div><b>209.0–218.0s</b><small>9.0s · rep 213.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:12.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0224p000.jpg" alt="C-RADIO segment representative at 224.0s">
+          <div><b>218.0–230.0s</b><small>12.0s · rep 224.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:45.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0252p000.jpg" alt="C-RADIO segment representative at 252.0s">
+          <div><b>230.0–275.0s</b><small>45.0s · rep 252.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:6.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0278p000.jpg" alt="C-RADIO segment representative at 278.0s">
+          <div><b>275.0–281.0s</b><small>6.0s · rep 278.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:6.5 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0286p000.jpg" alt="C-RADIO segment representative at 286.0s">
+          <div><b>281.0–291.0s</b><small>10.0s · rep 286.0s</small></div>
+        </div></div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO events more coherent &nbsp; □ C-RADIO events more coherent &nbsp; □ comparable &nbsp; □ ambiguous</div>
+    </article>
+    
+    <article class="segment-window">
+      <header><h3>Shortest DINO Fine segment context</h3><span>1571.6–1611.6s</span></header>
+      <div class="segment-row"><div class="track-label">DINOv2</div><div class="segments" data-window-width="40.0">
+        <div class="segment dinov2" style="flex:17.41599999999994 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1575p000.jpg" alt="DINOv2 segment representative at 1575.0s">
+          <div><b>1562.0–1589.0s</b><small>27.0s · rep 1575.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:12.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1595p000.jpg" alt="DINOv2 segment representative at 1595.0s">
+          <div><b>1589.0–1601.0s</b><small>12.0s · rep 1595.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:8.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1605p000.jpg" alt="DINOv2 segment representative at 1605.0s">
+          <div><b>1601.0–1609.0s</b><small>8.0s · rep 1605.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:2.58400000000006 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1610p000.jpg" alt="DINOv2 segment representative at 1610.0s">
+          <div><b>1609.0–1611.6s</b><small>2.6s · rep 1610.0s</small></div>
+        </div></div></div>
+      <div class="segment-row"><div class="track-label">C-RADIO</div><div class="segments" data-window-width="40.0">
+        <div class="segment c-radio" style="flex:17.41599999999994 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1578p000.jpg" alt="C-RADIO segment representative at 1578.0s">
+          <div><b>1568.0–1589.0s</b><small>21.0s · rep 1578.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:21.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1599p000.jpg" alt="C-RADIO segment representative at 1599.0s">
+          <div><b>1589.0–1610.0s</b><small>21.0s · rep 1599.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:1.58400000000006 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1611p000.jpg" alt="C-RADIO segment representative at 1611.0s">
+          <div><b>1610.0–1611.6s</b><small>1.6s · rep 1611.0s</small></div>
+        </div></div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO events more coherent &nbsp; □ C-RADIO events more coherent &nbsp; □ comparable &nbsp; □ ambiguous</div>
+    </article>
+    
+    <article class="segment-window">
+      <header><h3>Shortest C-RADIO Fine segment context</h3><span>293.0–333.0s</span></header>
+      <div class="segment-row"><div class="track-label">DINOv2</div><div class="segments" data-window-width="40.0">
+        <div class="segment dinov2" style="flex:18.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0301p000.jpg" alt="DINOv2 segment representative at 301.0s">
+          <div><b>291.0–311.0s</b><small>20.0s · rep 301.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:4.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0313p000.jpg" alt="DINOv2 segment representative at 313.0s">
+          <div><b>311.0–315.0s</b><small>4.0s · rep 313.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:10.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0320p000.jpg" alt="DINOv2 segment representative at 320.0s">
+          <div><b>315.0–325.0s</b><small>10.0s · rep 320.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:8.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0330p000.jpg" alt="DINOv2 segment representative at 330.0s">
+          <div><b>325.0–335.0s</b><small>10.0s · rep 330.0s</small></div>
+        </div></div></div>
+      <div class="segment-row"><div class="track-label">C-RADIO</div><div class="segments" data-window-width="40.0">
+        <div class="segment c-radio" style="flex:8.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0296p000.jpg" alt="C-RADIO segment representative at 296.0s">
+          <div><b>291.0–301.0s</b><small>10.0s · rep 296.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:10.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0306p000.jpg" alt="C-RADIO segment representative at 306.0s">
+          <div><b>301.0–311.0s</b><small>10.0s · rep 306.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:4.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0313p000.jpg" alt="C-RADIO segment representative at 313.0s">
+          <div><b>311.0–315.0s</b><small>4.0s · rep 313.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:17.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0323p000.jpg" alt="C-RADIO segment representative at 323.0s">
+          <div><b>315.0–332.0s</b><small>17.0s · rep 323.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:1.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0346p000.jpg" alt="C-RADIO segment representative at 346.0s">
+          <div><b>332.0–361.0s</b><small>29.0s · rep 346.0s</small></div>
+        </div></div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO events more coherent &nbsp; □ C-RADIO events more coherent &nbsp; □ comparable &nbsp; □ ambiguous</div>
+    </article>
+    
+    <article class="segment-window">
+      <header><h3>DINO splits more in this 60 s window</h3><span>340.0–400.0s</span></header>
+      <div class="segment-row"><div class="track-label">DINOv2</div><div class="segments" data-window-width="60.0">
+        <div class="segment dinov2" style="flex:10.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0342p000.jpg" alt="DINOv2 segment representative at 342.0s">
+          <div><b>335.0–350.0s</b><small>15.0s · rep 342.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:9.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0354p000.jpg" alt="DINOv2 segment representative at 354.0s">
+          <div><b>350.0–359.0s</b><small>9.0s · rep 354.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:10.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0364p000.jpg" alt="DINOv2 segment representative at 364.0s">
+          <div><b>359.0–369.0s</b><small>10.0s · rep 364.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:5.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0371p000.jpg" alt="DINOv2 segment representative at 371.0s">
+          <div><b>369.0–374.0s</b><small>5.0s · rep 371.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:6.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0377p000.jpg" alt="DINOv2 segment representative at 377.0s">
+          <div><b>374.0–380.0s</b><small>6.0s · rep 377.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:8.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0384p000.jpg" alt="DINOv2 segment representative at 384.0s">
+          <div><b>380.0–388.0s</b><small>8.0s · rep 384.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:10.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0393p000.jpg" alt="DINOv2 segment representative at 393.0s">
+          <div><b>388.0–398.0s</b><small>10.0s · rep 393.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:2.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0401p000.jpg" alt="DINOv2 segment representative at 401.0s">
+          <div><b>398.0–405.0s</b><small>7.0s · rep 401.0s</small></div>
+        </div></div></div>
+      <div class="segment-row"><div class="track-label">C-RADIO</div><div class="segments" data-window-width="60.0">
+        <div class="segment c-radio" style="flex:21.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0346p000.jpg" alt="C-RADIO segment representative at 346.0s">
+          <div><b>332.0–361.0s</b><small>29.0s · rep 346.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:15.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0368p000.jpg" alt="C-RADIO segment representative at 368.0s">
+          <div><b>361.0–376.0s</b><small>15.0s · rep 368.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:24.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_0391p000.jpg" alt="C-RADIO segment representative at 391.0s">
+          <div><b>376.0–406.0s</b><small>30.0s · rep 391.0s</small></div>
+        </div></div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO events more coherent &nbsp; □ C-RADIO events more coherent &nbsp; □ comparable &nbsp; □ ambiguous</div>
+    </article>
+    
+    <article class="segment-window">
+      <header><h3>C-RADIO splits more in this 60 s window</h3><span>1080.0–1140.0s</span></header>
+      <div class="segment-row"><div class="track-label">DINOv2</div><div class="segments" data-window-width="60.0">
+        <div class="segment dinov2" style="flex:7.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1080p000.jpg" alt="DINOv2 segment representative at 1080.0s">
+          <div><b>1073.0–1087.0s</b><small>14.0s · rep 1080.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:7.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1090p000.jpg" alt="DINOv2 segment representative at 1090.0s">
+          <div><b>1087.0–1094.0s</b><small>7.0s · rep 1090.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:15.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1101p000.jpg" alt="DINOv2 segment representative at 1101.0s">
+          <div><b>1094.0–1109.0s</b><small>15.0s · rep 1101.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:11.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1114p000.jpg" alt="DINOv2 segment representative at 1114.0s">
+          <div><b>1109.0–1120.0s</b><small>11.0s · rep 1114.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:12.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1126p000.jpg" alt="DINOv2 segment representative at 1126.0s">
+          <div><b>1120.0–1132.0s</b><small>12.0s · rep 1126.0s</small></div>
+        </div>
+        <div class="segment dinov2" style="flex:8.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1141p000.jpg" alt="DINOv2 segment representative at 1141.0s">
+          <div><b>1132.0–1151.0s</b><small>19.0s · rep 1141.0s</small></div>
+        </div></div></div>
+      <div class="segment-row"><div class="track-label">C-RADIO</div><div class="segments" data-window-width="60.0">
+        <div class="segment c-radio" style="flex:1.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1076p000.jpg" alt="C-RADIO segment representative at 1076.0s">
+          <div><b>1072.0–1081.0s</b><small>9.0s · rep 1076.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:5.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1083p000.jpg" alt="C-RADIO segment representative at 1083.0s">
+          <div><b>1081.0–1086.0s</b><small>5.0s · rep 1083.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:7.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1089p000.jpg" alt="C-RADIO segment representative at 1089.0s">
+          <div><b>1086.0–1093.0s</b><small>7.0s · rep 1089.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:13.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1099p000.jpg" alt="C-RADIO segment representative at 1099.0s">
+          <div><b>1093.0–1106.0s</b><small>13.0s · rep 1099.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:9.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1110p000.jpg" alt="C-RADIO segment representative at 1110.0s">
+          <div><b>1106.0–1115.0s</b><small>9.0s · rep 1110.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:7.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1118p000.jpg" alt="C-RADIO segment representative at 1118.0s">
+          <div><b>1115.0–1122.0s</b><small>7.0s · rep 1118.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:10.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1127p000.jpg" alt="C-RADIO segment representative at 1127.0s">
+          <div><b>1122.0–1132.0s</b><small>10.0s · rep 1127.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:5.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1134p000.jpg" alt="C-RADIO segment representative at 1134.0s">
+          <div><b>1132.0–1137.0s</b><small>5.0s · rep 1134.0s</small></div>
+        </div>
+        <div class="segment c-radio" style="flex:3.0 1 0">
+          <img src="assets/cradio_dino_segmentation_audit/frame_1143p000.jpg" alt="C-RADIO segment representative at 1143.0s">
+          <div><b>1137.0–1150.0s</b><small>13.0s · rep 1143.0s</small></div>
+        </div></div></div>
+      <div class="manual"><strong>Manual impression:</strong> □ DINO events more coherent &nbsp; □ C-RADIO events more coherent &nbsp; □ comparable &nbsp; □ ambiguous</div>
+    </article>
+    
+
+<h2>D. Existing strongest examples</h2>
+<ul class="existing-list">
+<li><a href="#example-5">Strongest DINO boundary near 1094 s</a></li>
+<li><a href="#example-1">Strongest C-RADIO boundary near 1345 s</a></li>
+<li><a href="#example-9">Strong DINO-only boundary near 369 s</a></li>
+<li><a href="#example-13">Strong C-RADIO-only boundary near 186 s</a></li>
+</ul>
+<p>Each linked card includes seven newly decoded context frames. Existing three-frame contact sheets remain preserved in the diagnostic output directory but are not needed to render this report.</p>
+
+<h2>E. Summary statistics</h2>
+<table class="stats"><thead><tr><th>Metric</th><th>DINOv2</th><th>C-RADIOv4</th></tr></thead><tbody>
+<tr><td>Fine segments</td><td>134</td><td>126</td></tr>
+<tr><td>Medium segments</td><td>46</td><td>40</td></tr>
+<tr><td>Adjacent cosine mean</td><td>0.797581</td><td>0.979667</td></tr>
+<tr><td>Adjacent cosine std</td><td>0.111810</td><td>0.017589</td></tr>
+<tr><td>Adjacent cosine MAD</td><td>0.056181</td><td>0.006066</td></tr>
+<tr><td>Smoothed MAD</td><td>0.047190</td><td>0.005558</td></tr>
+</tbody></table>
+<table class="stats"><thead><tr><th>Boundary tolerance</th><th>Matches</th><th>F1</th></tr></thead><tbody>
+<tr><td>Exact</td><td>31</td><td>0.240</td></tr>
+<tr><td>±1 s</td><td>67</td><td>0.519</td></tr>
+<tr><td>±2 s</td><td>82</td><td>0.636</td></tr>
+<tr><td>±5 s</td><td>99</td><td>0.767</td></tr>
+</tbody></table>
+<p class="callout">The 8.49× MAD difference indicates different similarity-signal scales, not an 8.49× performance difference.</p>
+
+<footer>Visualization-only audit. Source: <code>outputs/diagnostics/cradio_v4/dino_comparison/dino_comparison_results.json</code>. No embeddings, thresholds, segments, B0/B1/B2 definitions, or frozen artifacts were changed.</footer>
+</main></body></html>

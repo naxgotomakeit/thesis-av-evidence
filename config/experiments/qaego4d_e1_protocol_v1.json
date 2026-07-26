@@ -1,0 +1,92 @@
+{
+  "schema_version": "qaego4d-e1-protocol-v1",
+  "experiment_id": "E1",
+  "experiment_name": "QaEgo4D E1 Headroom Gate Preparation",
+  "status": "frozen_engineering_protocol_not_formal_result",
+  "evaluation_context": {
+    "scope": "canonical_clip",
+    "rule": "Every visual frame must have an actual decoded timestamp in [clip_start_sec, clip_end_sec). Parent-video frames outside the canonical clip are forbidden."
+  },
+  "manifests": {
+    "open": "configs/eval_manifests/qaego4d_open_eval_ids.json",
+    "closed": "configs/eval_manifests/qaego4d_closed_eval_ids.json",
+    "open_mapping": "configs/qaego4d/qaego4d_open_canonical_mapping.json",
+    "closed_mapping": "configs/qaego4d/qaego4d_closed_canonical_mapping.json"
+  },
+  "expected_question_counts": {
+    "open": 1850,
+    "closed": 500
+  },
+  "answer_models": {
+    "formal_candidate": {
+      "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+      "local_path": "/cs/student/project_msc/2025/rai/xinanx01/msc_thesis/models/Qwen2.5-VL-7B-Instruct",
+      "dtype": "bfloat16",
+      "quantization": "none",
+      "status": "candidate_until_E1_gate_passes"
+    },
+    "engineering_dry_run_only": {
+      "model_id": "Qwen/Qwen2-VL-2B-Instruct",
+      "local_path": "/cs/student/project_msc/2025/rai/xinanx01/models/Qwen2-VL-2B-Instruct",
+      "dtype": "bfloat16",
+      "quantization": "none",
+      "formal_reporting_permitted": false
+    }
+  },
+  "decoding": {
+    "seed": 20260723,
+    "do_sample": false,
+    "temperature": 0.0,
+    "use_cache": true,
+    "closed_max_new_tokens": 8,
+    "open_max_new_tokens": 64,
+    "max_pixels": 262144,
+    "local_files_only": true
+  },
+  "conditions": {
+    "blind": {
+      "visual_input": false,
+      "frame_budget": 0,
+      "description": "No visual input. Open receives question only; Closed receives question plus deterministic candidate order."
+    },
+    "uniform_8": {
+      "visual_input": true,
+      "frame_budget": 8,
+      "sampling_rule": "N=min(budget, max(1, floor(canonical_clip_duration_sec * nominal_fps))). Request equal temporal-bin centres in [clip_start_sec, clip_end_sec); decode the nearest unique real frame constrained to the canonical clip."
+    },
+    "uniform_32": {
+      "visual_input": true,
+      "frame_budget": 32,
+      "sampling_rule": "N=min(budget, max(1, floor(canonical_clip_duration_sec * nominal_fps))). Request equal temporal-bin centres in [clip_start_sec, clip_end_sec); decode the nearest unique real frame constrained to the canonical clip."
+    },
+    "oracle_leq8": {
+      "visual_input": true,
+      "frame_budget": 8,
+      "interval_rule": "For start < end, take the intersection of GT evidence [video_start_sec, video_end_sec) and canonical clip. Uniformly request up to eight equal-bin centres in that intersection; decode nearest unique real frames constrained to that intersection.",
+      "point_rule": "For start == end, retain the sample provisionally and use one nearest decodable real frame constrained to the canonical clip. Do not discard automatically.",
+      "invalid_interval_rule": "Fail the sample explicitly; never widen beyond canonical clip."
+    }
+  },
+  "closed_candidate_order": {
+    "rule": "Deterministic SHA256(sample_id) Fisher-Yates permutation of [ground-truth answer] + wrong_answers. This annotation export does not provide an option order.",
+    "letters": ["A", "B", "C", "D"]
+  },
+  "prompts": {
+    "open": "You are answering an open-ended question about a video. Use only the provided visual evidence when present. Answer concisely and factually. Do not mention uncertainty unless the evidence truly does not support an answer.\n\nQUESTION:\n{question}\n\nReturn only the answer text.",
+    "closed": "You are answering a multiple-choice question about a video. Use only the provided visual evidence when present.\n\nQUESTION:\n{question}\n\nOPTIONS:\n{options}\n\nReturn only the single option letter: A, B, C, or D."
+  },
+  "forbidden_components": [
+    "parent_video_context_outside_canonical_clip",
+    "retrieval",
+    "embeddings",
+    "segmentation",
+    "hierarchy",
+    "captions",
+    "audio",
+    "router",
+    "planner",
+    "fallback",
+    "question_conditioned_frame_selection",
+    "option_conditioned_frame_selection"
+  ]
+}

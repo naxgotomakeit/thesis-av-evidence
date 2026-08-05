@@ -10,6 +10,9 @@ It deliberately excludes V4/V5 experiments, generated outputs, datasets,
 model weights and credentials. Configure the four JSON files under
 `configs/experiments/` for the school filesystem before running.
 
+For the rationale, validation status and stopping conditions of V1--V5, see
+[the HourVideo version log](docs/HOURVIDEO_VERSION_LOG.md).
+
 ## Stages
 
 ```powershell

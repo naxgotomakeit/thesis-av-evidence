@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HourVideo V6.1 系统结构图</title>
+  <style>
+    :root{--ink:#172033;--muted:#5d687a;--paper:#f5f7fb;--card:#fff;--line:#d7deeb;--blue:#175cd3;--cyan:#0e7490;--green:#087443;--amber:#a95d00;--red:#b42318;--lav:#f2efff}
+    *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}.wrap{max-width:1380px;margin:auto;padding:30px 24px 55px}h1{font-size:30px;line-height:1.2;margin:0 0 7px}h2{font-size:21px;margin:34px 0 11px}h3{font-size:16px;margin:0 0 8px}.sub,.muted{color:var(--muted)}.sub{margin:0}.notice{margin:20px 0;padding:13px 16px;background:#edf4ff;border-left:4px solid var(--blue);border-radius:6px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:17px;box-shadow:0 1px 2px #15213c08}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.stage{position:relative;border-top:4px solid var(--blue)}.stage .num{color:var(--blue);font-weight:750;font-size:13px}.output{margin-top:12px;padding:9px 10px;background:#f7f9fc;border-radius:7px;font-size:13px}.arrow{color:var(--blue);font-size:26px;text-align:center;line-height:1;margin:3px}.flow{display:grid;grid-template-columns:1fr 35px 1fr 35px 1fr;align-items:stretch;gap:0}.flow .stage{min-height:170px}.small{font-size:13px}.tag{display:inline-block;padding:2px 7px;border-radius:999px;font-size:12px;font-weight:650;background:#eaf1ff;color:#164ca4;margin:2px 3px 2px 0}.ok{background:#e9f8ef;color:var(--green)}.warn{background:#fff2df;color:var(--amber)}.bad{background:#ffeded;color:var(--red)}.rule{border-left:3px solid var(--green);padding:8px 11px;background:#effaf3;border-radius:4px;margin-top:10px}.boundary{border:2px solid var(--cyan);background:#f1fcff}.boundary .num{color:var(--cyan)}.decision{border-top-color:var(--green)}.decision .num{color:var(--green)}.diagram{overflow-x:auto;padding:4px 0}.lane{display:grid;grid-template-columns:180px 30px minmax(210px,1fr) 30px minmax(240px,1.2fr) 30px minmax(210px,1fr);min-width:1050px;align-items:stretch;margin:12px 0}.node{border:1px solid var(--line);border-radius:11px;padding:14px;background:#fff}.node.blue{border-top:4px solid var(--blue)}.node.cyan{border-top:4px solid var(--cyan)}.node.green{border-top:4px solid var(--green)}.node.red{border-top:4px solid var(--red);background:#fff9f8}.node h3{font-size:16px}.edge{align-self:center;text-align:center;color:var(--blue);font-size:28px}.edge.down{font-size:21px}.split{display:grid;grid-template-columns:1fr 1fr;gap:13px}.compare{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}.compare th,.compare td{padding:10px 12px;vertical-align:top;text-align:left;border-bottom:1px solid #e9edf4}.compare th{color:var(--muted);font-size:13px;background:#f8faff}.compare tr:last-child td{border-bottom:0}.example{border:1px solid #f1c17b;border-radius:10px;background:#fffaf1;padding:15px}.quote{margin:8px 0;padding:8px 11px;background:#fff;border-left:3px solid var(--amber);font-family:ui-monospace,Consolas,monospace;font-size:13px}.foot{color:var(--muted);font-size:13px;margin:28px 0 0}@media(max-width:900px){.grid,.split{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.flow .arrow{transform:rotate(90deg);margin:8px}.wrap{padding:22px 14px}.lane{min-width:900px}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <h1>HourVideo V6.1：当前系统结构图</h1>
+  <p class="sub">这张图描述的是当前 coarse-locked shared investigation 线路；V3 保持独立、不受这里的改动影响。</p>
+
+  <div class="notice"><b>一句话：</b>先用地图把整道题的相关范围锁出来，做一次共享调查；调查得到的事实必须经过关键事实核验，随后 mapping 只能使用留下的事实判断全部选项，final 再决定是确认还是诚实猜测。</div>
+
+  <h2>主链路</h2>
+  <div class="diagram card">
+    <div class="lane">
+      <section class="node blue"><h3>输入</h3><span class="tag">question</span><span class="tag">A–E options</span><br><span class="tag">Coarse / Medium / Fine map</span><p class="small">R1 是结构地图；R3 有 caption / ASR 语义地图。</p></section>
+      <div class="edge">→</div>
+      <section class="node blue"><h3>1. Planner</h3><p class="small">仍按选项提出检索计划，分别判断哪些 Coarse 区域相关。</p><div class="output"><b>输出：</b>每个选项的 Coarse locks、检索 query、排除理由。</div></section>
+      <div class="edge">→</div>
+      <section class="node cyan"><h3>2. Shared investigation</h3><p class="small">把所有选项锁定的 Coarse <b>取并集</b>，整道题只做一次调查循环：地图 → recheck → Fine 图片 → 更新调查。</p><div class="output"><b>输出：</b><code>atomic_facts</code>、每条事实的 evidence IDs、调查状态。</div></section>
+      <div class="edge">→</div>
+      <section class="node boundary"><h3>3. Fact verification gate</h3><p class="small">只挑会影响选项区分的关键事实，回查其引用的 caption / ASR。</p><div class="output"><span class="tag ok">verified</span> 保留<br><span class="tag bad">unverified</span> 从 mapping 输入移除</div></section>
+    </div>
+    <div class="lane" style="grid-template-columns:180px 30px minmax(300px,1.4fr) 30px minmax(260px,1fr) 30px minmax(210px,.9fr);margin-top:20px">
+      <section class="node cyan"><h3>可信事实集</h3><p class="small">保留原始调查记录供审计；另生成只含可用事实的列表。</p></section>
+      <div class="edge">→</div>
+      <section class="node green"><h3>4. Option mapping</h3><p class="small"><b>只能看可信 atomic facts</b>，不能看完整证据池、也不能重读原始长叙事。</p><p class="small">每个 A–E 都必须输出：</p><span class="tag">supported</span><span class="tag">refuted</span><span class="tag">unresolved</span><br><span class="tag">used_facts</span><div class="rule">支持或否定一个选项时，必须报出实际使用了哪几条 facts。</div></section>
+      <div class="edge">→</div>
+      <section class="node green"><h3>5. Final gate</h3><p class="small">从 mapping 的 <code>used_facts</code> 正向汇总 citations。</p><div class="output"><span class="tag ok">confirmed</span> 唯一 supported 且有引用<br><span class="tag warn">budget_exhausted_guess</span> 多候选、未解决或预算耗尽</div></section>
+      <div class="edge">→</div>
+      <section class="node green"><h3>输出</h3><p class="small">答案、final status、实际引用、caveat，以及共享调查与核验记录。</p></section>
+    </div>
+  </div>
+
+  <h2>刚加上的两道“信息边界”</h2>
+  <div class="flow">
+    <section class="card stage"><div class="num">A. 不可信事实不能进入答案层</div><h3>以前</h3><p class="small">核验失败的事实仍可能出现在长总结里；mapping 看到了它，AI 可能继续使用。</p><h3>现在</h3><p class="small">核验失败的 fact 根本不传给 mapping。例如 <code>messy room → Bedroom</code> 被拒绝后，mapping 看不到 <code>Bedroom</code>。</p></section>
+    <div class="arrow">→</div>
+    <section class="card stage"><div class="num">B. 引用只从实际依据生成</div><h3>以前</h3><p class="small">final 可能把 shared investigation 的整包 evidence IDs 都带上。</p><h3>现在</h3><p class="small">每个选项先报告 <code>used_facts</code>；final 只引用这些 facts 自己的 evidence IDs。</p></section>
+    <div class="arrow">→</div>
+    <section class="card stage decision"><div class="num">结果</div><h3>防止两种绕路</h3><p class="small">1. 不可信总结一路传到答案；<br>2. 同一证据既支持可信事实、又被误当成支持脑补事实时被“一刀切”删除。</p></section>
+  </div>
+
+  <h2>Plaster 题揭出的剩余缺口</h2>
+  <div class="example">
+    <h3>不是 “Bedroom” 那类完全无根据的词，而是目标对象被偷换</h3>
+    <div class="quote">原始证据：F037 shows spraying water into the bucket/compound.</div>
+    <div class="quote">错误 atomic fact：The camera wearer dampened the wall surface ...</div>
+    <p>两个句子都含有 “spraying water”，现有语义核验因此可能误放行；但关键对象是 <b>bucket/compound</b>，不是 <b>wall surface</b>。</p>
+    <p><span class="tag bad">当前未完全解决</span> 这说明 shared investigation 仍可能把事实向选项措辞靠拢，而 fact verifier 对“动作发生在什么对象上”的核验还不够严格。</p>
+    <p><b>下一步对应的结构改动：</b>discriminator checklist。先抽出 A/B 真正不同的点（这里是“是否弄湿墙面”），再让共享调查单独回答这个小问题，而不是从长总结中间接推断。</p>
+  </div>
+
+  <h2>谁负责什么？</h2>
+  <table class="compare">
+    <thead><tr><th>组件</th><th>当前责任</th><th>不负责什么</th></tr></thead>
+    <tbody>
+      <tr><td><b>Planner</b></td><td>按选项锁定可能相关的 Coarse 区域，提出检索词。</td><td>不直接决定选项真假。</td></tr>
+      <tr><td><b>Shared investigation / SFC</b></td><td>对整道题调查一次，结合地图、文字与必要 Fine 图片产出带引用的 facts。</td><td>不应在没有证据时把模糊描述具体化。</td></tr>
+      <tr><td><b>Fact verification</b></td><td>检查关键事实是否真的被它自己的引用文本支持。</td><td>当前还不能完全识别复杂的对象/目标偷换。</td></tr>
+      <tr><td><b>Mapping</b></td><td>把可信 facts 映射成每个选项的 supported / refuted / unresolved。</td><td>不能自行查原始 evidence、不能发明新事实。</td></tr>
+      <tr><td><b>Final gate</b></td><td>仅在唯一支持且有证据链时标 confirmed；否则标猜测及 caveat。</td><td>不能把“结构上唯一”误称为“视频理解一定正确”。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>当前仍未解决的三层问题</h2>
+  <div class="grid">
+    <section class="card"><h3>1. 关键区分点</h3><p class="small">尚未有 discriminator checklist。共享调查仍可能没有正面核对选项真正不同的那一句。</p></section>
+    <section class="card"><h3>2. 证据理解</h3><p class="small">时长边界、细粒度动作、以及 “bucket ≠ wall” 这类目标关系仍会出错。</p></section>
+    <section class="card"><h3>3. 成本与索引</h3><p class="small">Planner 仍为五个选项产生重复计划；跨轮 hash 缓存、抽帧与 indexer 暂未调整。</p></section>
+  </div>
+
+  <p class="foot">状态：V6.1 fact-verified mapping checkpoint。此图说明系统结构与已知边界，不把单次十题准确率视为统计结论。</p>
+</main>
+</body>
+</html>

@@ -1981,3 +1981,92 @@ def test_real_live_06638e64_response_would_have_been_rejected_under_the_old_rule
         row for row in REAL_LIVE_06638E64_DISCRIMINATOR_RESPONSE["discriminators"] if "dampen" in row["text"].lower()
     )
     assert wall_dampening["option_ids_with_unique_clause"] == ["B"]
+
+
+# ============================================================================
+# Discriminator checklist (2026-08-10): a real 10-question comparison run
+# crashed on 6baa673a -- 6 discriminators made discriminator_findings coverage
+# push shared_investigation's output past claim_max_tokens (a budget sized for
+# V6.1, no discriminators at all, and deliberately kept identical for a fair
+# V6.1/V6.2 cost comparison). Per the user's explicit choice: degrade to no
+# discriminators under budget pressure, the same as when discriminator
+# extraction itself fails -- never raise, never raise the budget.
+# ============================================================================
+
+def test_call_shared_investigation_degrades_to_no_discriminators_under_budget_pressure():
+    from experiments.hourvideo_r1_av_r3_2_coarse_locked_claim_loop_v6_2 import core as v6_core
+
+    attempts_with_discriminators = {"n": 0}
+    good_provider = _investigation({"discriminator_findings": []})
+
+    def fake_anthropic_call(cfg, system, payload, schema, max_tokens):
+        if payload["discriminators"]:
+            attempts_with_discriminators["n"] += 1
+            raise RuntimeError("Anthropic structured response reached max_tokens")
+        return good_provider, {"provider": "anthropic", "output_tokens": 1}
+
+    original = v6_core._anthropic_call
+    v6_core._anthropic_call = fake_anthropic_call
+    try:
+        result, usage = v6_core._call_shared_investigation(
+            {"anthropic": {"claim_max_tokens": 100}, "max_validation_retries": 2},
+            QUESTION, EVIDENCE, [], round_number=0, discriminators=DISCRIMINATORS,
+        )
+    finally:
+        v6_core._anthropic_call = original
+    # Every attempt WITH discriminators actually ran (never silently skipped) before falling back.
+    assert attempts_with_discriminators["n"] == 2
+    assert result["discriminator_findings"] == []
+
+
+def test_call_shared_investigation_still_raises_when_budget_pressure_is_unrelated_to_discriminators():
+    # The fallback must not mask a genuine, discriminator-independent failure: if it still fails with
+    # zero discriminators too, this was never about the discriminator checklist and must still raise,
+    # exactly like V6.1's original (pre-discriminator) behavior.
+    from experiments.hourvideo_r1_av_r3_2_coarse_locked_claim_loop_v6_2 import core as v6_core
+
+    def always_fails(cfg, system, payload, schema, max_tokens):
+        raise RuntimeError("Anthropic structured response reached max_tokens")
+
+    original = v6_core._anthropic_call
+    v6_core._anthropic_call = always_fails
+    try:
+        try:
+            v6_core._call_shared_investigation(
+                {"anthropic": {"claim_max_tokens": 100}, "max_validation_retries": 2},
+                QUESTION, EVIDENCE, [], round_number=0, discriminators=DISCRIMINATORS,
+            )
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("expected RuntimeError to still propagate when nothing ever succeeds")
+    finally:
+        v6_core._anthropic_call = original
+
+
+def test_call_shared_investigation_with_no_discriminators_behaves_exactly_as_before():
+    # No fallback attempt should ever fire when there were no discriminators to begin with -- this is
+    # V6.1's original, unmodified contract.
+    from experiments.hourvideo_r1_av_r3_2_coarse_locked_claim_loop_v6_2 import core as v6_core
+
+    calls = {"n": 0}
+
+    def always_fails(cfg, system, payload, schema, max_tokens):
+        calls["n"] += 1
+        raise RuntimeError("Anthropic structured response reached max_tokens")
+
+    original = v6_core._anthropic_call
+    v6_core._anthropic_call = always_fails
+    try:
+        try:
+            v6_core._call_shared_investigation(
+                {"anthropic": {"claim_max_tokens": 100}, "max_validation_retries": 2},
+                QUESTION, EVIDENCE, [], round_number=0,
+            )
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("expected RuntimeError to propagate")
+    finally:
+        v6_core._anthropic_call = original
+    assert calls["n"] == 2

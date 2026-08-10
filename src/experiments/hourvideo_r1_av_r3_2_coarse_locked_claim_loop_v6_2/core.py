@@ -651,6 +651,25 @@ def _call_shared_investigation(
     cfg: dict[str, Any], question: dict[str, Any], evidence: list[dict[str, Any]],
     excluded_judgments: list[dict[str, Any]], round_number: int, discriminators: list[dict[str, Any]] = (),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        return _call_shared_investigation_attempt(cfg, question, evidence, excluded_judgments, round_number, discriminators)
+    except RuntimeError:
+        if not discriminators:
+            raise
+        # Real crash (2026-08-10, live 10-question comparison run against 6baa673a): a question with
+        # 6 discriminators required discriminator_findings to cover all 6, on top of established_facts/
+        # atomic_facts, and pushed output past claim_max_tokens -- a budget sized for V6.1 (no
+        # discriminators at all) and deliberately kept IDENTICAL here so V6.1/V6.2 stay a fair,
+        # same-budget cost comparison; raising claim_max_tokens for V6.2 only would break that. Same
+        # contract as _call_discriminator_extraction: this mechanism must degrade to today's (V6.1)
+        # behavior under budget pressure, not newly crash a question that would otherwise complete.
+        return _call_shared_investigation_attempt(cfg, question, evidence, excluded_judgments, round_number, discriminators=())
+
+
+def _call_shared_investigation_attempt(
+    cfg: dict[str, Any], question: dict[str, Any], evidence: list[dict[str, Any]],
+    excluded_judgments: list[dict[str, Any]], round_number: int, discriminators: list[dict[str, Any]] = (),
+) -> tuple[dict[str, Any], dict[str, Any]]:
     excluded_coarse_ids = [j["coarse_id"] for j in excluded_judgments]
     payload = {
         "question": question, "evidence": evidence, "round": round_number,

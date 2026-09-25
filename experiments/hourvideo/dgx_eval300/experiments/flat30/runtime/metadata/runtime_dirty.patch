@@ -1,0 +1,615 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 89c9fd0..265391e 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -37,6 +37,16 @@ Homepage = "https://github.com/Echochef/VideoSEAL"
+ Repository = "https://github.com/Echochef/VideoSEAL"
+ "Model (HuggingFace)" = "https://huggingface.co/CewEhao/VideoSEAL_8B"
+ 
++[project.optional-dependencies]
++dgx-runner = [
++  "numpy",
++  "openai",
++  "opencv-python-headless",
++  "pillow",
++  "pyarrow",
++  "requests",
++]
++
+ [tool.setuptools.packages.find]
+ where = ["."]
+ include = ["videoseal*", "rllm*", "verl*"]
+diff --git a/videoseal/agents/tool_agent.py b/videoseal/agents/tool_agent.py
+index c0b19c5..ccb96a5 100644
+--- a/videoseal/agents/tool_agent.py
++++ b/videoseal/agents/tool_agent.py
+@@ -222,9 +222,28 @@ class SimpleToolAgent:
+         if self._traj_start_monotonic is not None:
+             self.traj.elapsed_sec = round(time.monotonic() - float(self._traj_start_monotonic), 6)
+         self.traj.finished_at = datetime.now(timezone.utc).isoformat()
++        self._checkpoint_trajectory(save_dir)
++
++    def _checkpoint_trajectory(self, save_dir: str) -> None:
++        """Atomically persist the current agent state without marking it complete."""
++        if self.traj is None:
++            return
++        if self._traj_start_monotonic is not None:
++            self.traj.elapsed_sec = round(time.monotonic() - float(self._traj_start_monotonic), 6)
+         out_dir = Path(save_dir) / self.traj.run_id
+         out_dir.mkdir(parents=True, exist_ok=True)
+-        (out_dir / "trajectory.json").write_text(json.dumps(asdict(self.traj), ensure_ascii=False, indent=2), encoding="utf-8")
++        target = out_dir / "trajectory.json"
++        temporary = out_dir / "trajectory.json.tmp"
++        temporary.write_text(json.dumps(asdict(self.traj), ensure_ascii=False, indent=2), encoding="utf-8")
++        os.replace(temporary, target)
++
++    def _append_step(self, step: Step) -> None:
++        if self.traj is None:
++            return
++        self.traj.steps.append(step)
++        save_dir = getattr(self, "_save_dir", None)
++        if save_dir:
++            self._checkpoint_trajectory(str(save_dir))
+ 
+     def _fallback_answer_from_last_tool(self) -> Optional[str]:
+         if self.traj is None:
+@@ -297,6 +316,7 @@ class SimpleToolAgent:
+         try:
+             os.environ["VISUAL_INSPECT_PROMPT_MODE"] = (os.getenv("AGENT_LAST_STEP_VISUAL_INSPECT_PROMPT_MODE") or "mcq").strip() or "mcq"
+             os.environ["INSPECT_FPS"] = str(fps)
++            tool_started = time.monotonic()
+             out = tool_cls()(**args)
+         finally:
+             if restore_mode is None:
+@@ -317,10 +337,21 @@ class SimpleToolAgent:
+             "forced": True,
+             "mode": "full_video",
+         }
++        if not isinstance(payload.get("metadata"), dict):
++            payload["metadata"] = {}
++        payload["metadata"]["tool_elapsed_sec"] = round(time.monotonic() - tool_started, 6)
++        if isinstance(out.metadata, dict):
++            payload["metadata"].update(out.metadata)
++        st.timing["tool_elapsed_sec"] = payload["metadata"]["tool_elapsed_sec"]
+         st.observation = payload
+-        self.traj.steps.append(st)
++        self._append_step(st)
+ 
+         if not ok:
++            err_lower = str(out.error or "").lower()
++            if "cuda out of memory" in err_lower or "outofmemoryerror" in err_lower:
++                if getattr(self, "_save_dir", None):
++                    self._save_trajectory(str(self._save_dir))
++                raise RuntimeError(f"VIDEOSEAL_OOM_SKIP: {out.error}")
+             self.traj.note = f"max steps reached; forced full-video visual_inspect failed: {out.error}"
+             return None
+ 
+@@ -341,6 +372,7 @@ class SimpleToolAgent:
+         prompt_type: int = 0,
+     ) -> Dict[str, Any]:
+         self._traj_start_monotonic = time.monotonic()
++        self._save_dir = save_dir
+         self._video_path = str(video_path or "")
+         self._visual_index = str(visual_index or "") if visual_index else None
+         self._prompt_type = int(prompt_type)
+@@ -372,6 +404,8 @@ class SimpleToolAgent:
+             api_history.append({"role": "user", "content": user_base})
+ 
+         for step_idx in range(1, int(max_steps) + 1):
++            step_started = time.monotonic()
++            model_started = time.monotonic()
+             if self.llm_backend == "vllm":
+                 self._ensure_vllm()
+                 from vllm import SamplingParams  # type: ignore
+@@ -437,6 +471,7 @@ class SimpleToolAgent:
+                                 args = {}
+ 
+                             st = Step(chat_prompt=user_base, model_response=json.dumps({"tool_calls": tool_calls}, ensure_ascii=False), usage=usage)
++                            st.timing["model_elapsed_sec"] = round(time.monotonic() - model_started, 6)
+                             st.thinking = parse_thinking(resp_text or "")
+                             st.action = {"name": tool_name, "arguments": args}
+ 
+@@ -445,7 +480,7 @@ class SimpleToolAgent:
+                                 payload = {"name": tool_name, "ok": False, "output": None, "error": f"unknown tool: {tool_name}"}
+                                 api_history.append({"role": "tool", "tool_call_id": call_id, "content": f"Error: {payload['error']}"})
+                                 st.observation = payload
+-                                self.traj.steps.append(st)
++                                self._append_step(st)
+                                 continue
+ 
+                             tool = tool_cls()
+@@ -464,6 +499,7 @@ class SimpleToolAgent:
+                             if _set_vis_mode:
+                                 _restore_vis_mode = os.getenv("VISUAL_INSPECT_PROMPT_MODE")
+                                 os.environ["VISUAL_INSPECT_PROMPT_MODE"] = (os.getenv("AGENT_LAST_STEP_VISUAL_INSPECT_PROMPT_MODE") or "mcq").strip()
++                            tool_started = time.monotonic()
+                             try:
+                                 out = tool(**injected)
+                             finally:
+@@ -475,18 +511,27 @@ class SimpleToolAgent:
+ 
+                             ok = out.error is None
+                             payload = {"name": tool_name, "ok": ok, "output": out.output if ok else None, "error": out.error, "metadata": out.metadata}
++                            if not isinstance(payload.get("metadata"), dict):
++                                payload["metadata"] = {}
++                            payload["metadata"]["tool_elapsed_sec"] = round(time.monotonic() - tool_started, 6)
+                             visible_txt = out.to_string()
+                             api_history.append({"role": "tool", "tool_call_id": call_id, "content": visible_txt})
+                             st.observation = payload
+-                            self.traj.steps.append(st)
++                            self._append_step(st)
++                            err_lower = str(out.error or "").lower()
++                            if not ok and ("cuda out of memory" in err_lower or "outofmemoryerror" in err_lower):
++                                if save_dir:
++                                    self._save_trajectory(save_dir)
++                                raise RuntimeError(f"VIDEOSEAL_OOM_SKIP: {out.error}")
+ 
+                         # continue after tool execution
+                         continue
+ 
+                     # No OpenAI tool calls. Accept only a tagged final answer; otherwise remind and retry.
+                     st = Step(chat_prompt=user_base, model_response=resp_text or "", usage=usage)
++                    st.timing["model_elapsed_sec"] = round(time.monotonic() - model_started, 6)
+                     st.thinking = parse_thinking(resp_text or "")
+-                    self.traj.steps.append(st)
++                    self._append_step(st)
+                     ans = _parse_final_answer(resp_text or "")
+                     if ans:
+                         self.traj.answer = ans.strip()
+@@ -522,6 +567,7 @@ class SimpleToolAgent:
+             # Shared parsing for vllm backend and legacy API backend.
+             resp_text = str(resp_text or "")
+             st = Step(chat_prompt=user_base, model_response=resp_text, usage=usage)
++            st.timing["model_elapsed_sec"] = round(time.monotonic() - model_started, 6)
+             st.thinking = parse_thinking(resp_text)
+ 
+             call = parse_tool_call_qwen(resp_text)
+@@ -534,7 +580,7 @@ class SimpleToolAgent:
+                 if tool_cls is None:
+                     payload = {"name": tool_name, "ok": False, "output": None, "error": f"unknown tool: {tool_name}"}
+                     st.observation = payload
+-                    self.traj.steps.append(st)
++                    self._append_step(st)
+                     tool_history_blocks.append(f"<tool_response>{json.dumps(payload, ensure_ascii=False)}</tool_response>")
+                     continue
+ 
+@@ -542,15 +588,24 @@ class SimpleToolAgent:
+                 injected = self._inject_system_args(tool_name, args)
+                 injected = sanitize_args_against_schema(tool, injected)
+                 injected = filter_args_for_forward(tool, injected)
++                tool_started = time.monotonic()
+                 out = tool(**injected)
+                 ok = out.error is None
+                 payload = {"name": tool_name, "ok": ok, "output": out.output if ok else None, "error": out.error, "metadata": out.metadata}
++                if not isinstance(payload.get("metadata"), dict):
++                    payload["metadata"] = {}
++                payload["metadata"]["tool_elapsed_sec"] = round(time.monotonic() - tool_started, 6)
+                 st.observation = payload
+-                self.traj.steps.append(st)
++                self._append_step(st)
++                err_lower = str(out.error or "").lower()
++                if not ok and ("cuda out of memory" in err_lower or "outofmemoryerror" in err_lower):
++                    if save_dir:
++                        self._save_trajectory(save_dir)
++                    raise RuntimeError(f"VIDEOSEAL_OOM_SKIP: {out.error}")
+                 tool_history_blocks.append(f"<tool_response>{ToolOutput(name=tool_name, output=payload.get('output') if ok else out.to_string()).to_string()}</tool_response>")
+                 continue
+ 
+-            self.traj.steps.append(st)
++            self._append_step(st)
+             ans = _parse_final_answer(resp_text)
+             if ans:
+                 self.traj.answer = ans.strip()
+diff --git a/videoseal/cli/run_from_parquet.py b/videoseal/cli/run_from_parquet.py
+index e924e8b..f6ae292 100644
+--- a/videoseal/cli/run_from_parquet.py
++++ b/videoseal/cli/run_from_parquet.py
+@@ -388,6 +388,17 @@ def main() -> int:
+         print(f"[DRY_RUN] parquet={parquet} save_runs={save_runs} video_id={ns.video_id or ''}")
+         return 0
+ 
++    experiment_config_path = (os.getenv("EXPERIMENT_CONFIG_PATH") or "").strip()
++    if experiment_config_path:
++        from videoseal.runner.experiment_config import update_experiment_config
++
++        update_experiment_config(
++            output_path=Path(experiment_config_path), repo_root=repo_root, parquet=parquet,
++            uids_file=Path(ns.uids_file).expanduser() if ns.uids_file else None, save_runs=save_runs,
++            max_steps=int(ns.max_steps), task_timeout_sec=float(ns.task_timeout_sec),
++            concurrency=int(conc.total), boundary="started_at_utc",
++        )
++
+     run_shards(
+         repo_root=repo_root,
+         runner_module=runner_module,
+@@ -407,6 +418,13 @@ def main() -> int:
+     if ns.video_id:
+         cmd += ["--video-id", ns.video_id]
+     subprocess.run(cmd, cwd=repo_root.as_posix(), env=_child_env_base(repo_root), check=True)
++    if experiment_config_path:
++        update_experiment_config(
++            output_path=Path(experiment_config_path), repo_root=repo_root, parquet=parquet,
++            uids_file=Path(ns.uids_file).expanduser() if ns.uids_file else None, save_runs=save_runs,
++            max_steps=int(ns.max_steps), task_timeout_sec=float(ns.task_timeout_sec),
++            concurrency=int(conc.total), boundary="finished_at_utc",
++        )
+     return 0
+ 
+ 
+diff --git a/videoseal/runner/per_question_runner.py b/videoseal/runner/per_question_runner.py
+index 7c1b4e8..7317934 100644
+--- a/videoseal/runner/per_question_runner.py
++++ b/videoseal/runner/per_question_runner.py
+@@ -16,6 +16,105 @@ from videoseal.utils.agent.tool_agent_parsing import strip_multiple_choice_optio
+ from videoseal.utils.lvbench_io import parse_choice_letter, parse_choice_letter_smart
+ 
+ 
++def _error_type(message: str) -> str:
++    text = str(message or "").lower()
++    if "timeout" in text:
++        return "timeout"
++    if "out of memory" in text or "oom" in text:
++        return "oom"
++    if "cuda" in text:
++        return "cuda"
++    if any(token in text for token in ("http", "connection", "connecttimeout", "readtimeout", "request")):
++        return "http"
++    if any(token in text for token in ("parse", "json", "decode")):
++        return "parse"
++    return "other"
++
++
++def _latest_trajectory(save_root: Path, video_id: str, uid: str) -> Dict[str, Any]:
++    candidates: list[tuple[int, Path, Dict[str, Any]]] = []
++    for path in (save_root / video_id).glob("*/trajectory.json"):
++        try:
++            data = json.loads(path.read_text(encoding="utf-8"))
++            if str(data.get("uid") or "") == uid:
++                candidates.append((path.stat().st_mtime_ns, path, data))
++        except Exception:
++            continue
++    return max(candidates, key=lambda item: item[0])[2] if candidates else {}
++
++
++def _write_question_metrics(
++    *, save_root: Path, video_id: str, uid: str, status: str, error: str = "", elapsed_fallback: Optional[float] = None
++) -> None:
++    """Best-effort observability only; metrics failures must never fail a task."""
++    try:
++        traj = _latest_trajectory(save_root, video_id, uid)
++        steps = traj.get("steps") if isinstance(traj.get("steps"), list) else []
++        planner_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
++        visual_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
++        retrieve_calls = 0
++        inspect_calls = 0
++        sent_images = 0
++        sent_timestamps: set[float] = set()
++        for step in steps:
++            if not isinstance(step, dict):
++                continue
++            usage = step.get("usage") if isinstance(step.get("usage"), dict) else {}
++            for key in planner_usage:
++                planner_usage[key] += int(usage.get(key) or 0)
++            action = step.get("action") if isinstance(step.get("action"), dict) else {}
++            name = str(action.get("name") or "")
++            obs = step.get("observation") if isinstance(step.get("observation"), dict) else {}
++            meta = obs.get("metadata") if isinstance(obs.get("metadata"), dict) else {}
++            if name == "visual_retrieve":
++                retrieve_calls += 1
++                for key in visual_usage:
++                    visual_usage[key] += int(meta.get(key) or 0)
++            elif name == "visual_inspect":
++                inspect_calls += 1
++                vu = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
++                for key in visual_usage:
++                    visual_usage[key] += int(vu.get(key) or 0)
++                sent_images += int(meta.get("sent_image_count") or meta.get("image_count") or 0)
++                for value in meta.get("image_timestamps") or []:
++                    try:
++                        sent_timestamps.add(round(float(value), 3))
++                    except (TypeError, ValueError):
++                        pass
++        elapsed = traj.get("elapsed_sec")
++        if elapsed is None:
++            elapsed = elapsed_fallback
++        record = {
++            "uid": uid,
++            "status": status,
++            "error_type": "none" if not error else _error_type(error),
++            "elapsed_sec": round(float(elapsed), 6) if elapsed is not None else None,
++            "steps": len(steps),
++            "planner_calls": sum(
++                1 for step in steps
++                if isinstance(step, dict)
++                and isinstance(step.get("timing"), dict)
++                and step["timing"].get("model_elapsed_sec") is not None
++            ),
++            "visual_retrieve_calls": retrieve_calls,
++            "visual_inspect_calls": inspect_calls,
++            "planner_tokens": planner_usage["total_tokens"],
++            "visual_tokens": visual_usage["total_tokens"],
++            "sent_images": sent_images,
++            "unique_sent_timestamps": len(sent_timestamps),
++            "planner_token_usage": planner_usage,
++            "visual_token_usage": visual_usage,
++        }
++        metrics_dir = save_root / video_id / "metrics"
++        metrics_dir.mkdir(parents=True, exist_ok=True)
++        target = metrics_dir / f"{uid}.json"
++        temporary = metrics_dir / f".{uid}.json.tmp-{os.getpid()}"
++        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
++        os.replace(temporary, target)
++    except Exception as exc:
++        print(json.dumps({"metrics_warning": f"{type(exc).__name__}: {exc}", "uid": uid}, ensure_ascii=False), flush=True)
++
++
+ def _norm(s: Optional[str]) -> str:
+     return str(s or "").strip()
+ 
+@@ -225,8 +324,23 @@ def _worker_one_task(*, task: Dict[str, Any], save_root: str, max_steps: int, pr
+     uid = str(task.get("uid") or "")
+     try:
+         v, u, pred = _run_one_task(task, save_root=Path(save_root), max_steps=int(max_steps), prompt_type=int(prompt_type))
++        _write_question_metrics(save_root=Path(save_root), video_id=v, uid=u, status=("success" if pred else "incomplete"))
++        if pred:
++            trusted_path = Path(save_root) / "migration_snapshot" / "trusted_completed_myriad.txt"
++            trusted_path.parent.mkdir(parents=True, exist_ok=True)
++            with trusted_path.open("a", encoding="utf-8") as f:
++                f.write(u + "\n")
+         result_queue.put({"pid": pid, "video_id": v, "uid": u, "pred": pred})
+     except Exception as e:
++        message = f"{type(e).__name__}: {e}"
++        _write_question_metrics(save_root=Path(save_root), video_id=vid, uid=uid, status="failed", error=message)
++        if "VIDEOSEAL_OOM_SKIP" in message or "CUDA out of memory" in message:
++            retry_path = Path(save_root) / "migration_snapshot" / "oom_retry_uids.txt"
++            retry_path.parent.mkdir(parents=True, exist_ok=True)
++            # Each line is well below PIPE_BUF; append mode keeps concurrent
++            # workers from overwriting one another.
++            with retry_path.open("a", encoding="utf-8") as f:
++                f.write(uid + "\n")
+         result_queue.put({"pid": pid, "video_id": vid, "uid": uid, "error": f"{type(e).__name__}: {e}"})
+ 
+ 
+@@ -411,6 +525,10 @@ def main() -> int:
+                     alive = rp.proc.is_alive()
+                     if not alive:
+                         running.pop(pid, None)
++                        _write_question_metrics(
++                            save_root=runs_root, video_id=str(rp.task.get("video_id") or ""),
++                            uid=str(rp.task.get("uid") or ""), status="failed", error="worker exited without result",
++                        )
+                         rec = {"video_id": str(rp.task.get("video_id") or ""), "uid": str(rp.task.get("uid") or ""), "error": "worker exited without result"}
+                         _finish_once(rec)
+                         continue
+@@ -419,6 +537,14 @@ def main() -> int:
+                             rp.proc.terminate()
+                         rp.proc.join(timeout=1.0)
+                         running.pop(pid, None)
++                        _write_question_metrics(
++                            save_root=runs_root,
++                            video_id=str(rp.task.get("video_id") or ""),
++                            uid=str(rp.task.get("uid") or ""),
++                            status="timeout",
++                            error=f"timeout>{task_timeout}s",
++                            elapsed_fallback=(time.time() - rp.start_time),
++                        )
+                         rec = {"video_id": str(rp.task.get("video_id") or ""), "uid": str(rp.task.get("uid") or ""), "error": f"timeout>{task_timeout}s"}
+                         _finish_once(rec)
+         finally:
+@@ -426,6 +552,11 @@ def main() -> int:
+                 if rp.proc.is_alive():
+                     rp.proc.terminate()
+                 rp.proc.join(timeout=0.2)
++                _write_question_metrics(
++                    save_root=runs_root, video_id=str(rp.task.get("video_id") or ""),
++                    uid=str(rp.task.get("uid") or ""), status="incomplete",
++                    elapsed_fallback=(time.time() - rp.start_time),
++                )
+                 running.pop(pid, None)
+     else:
+         with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_ctx) as ex:
+diff --git a/videoseal/tools/visual_tools.py b/videoseal/tools/visual_tools.py
+index 8fb8b86..c167963 100644
+--- a/videoseal/tools/visual_tools.py
++++ b/videoseal/tools/visual_tools.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ import json
+ import math
+ import os
++import time
+ from pathlib import Path
+ from typing import Any, Dict, List, Optional, Tuple
+ 
+@@ -40,6 +41,19 @@ from videoseal.utils.env_paths import get_frames_root
+ FRAMES_ROOT = get_frames_root()
+ 
+ 
++def _metrics_error_type(exc: BaseException) -> str:
++    text = f"{type(exc).__name__}: {exc}".lower()
++    if "out of memory" in text or "oom" in text:
++        return "oom"
++    if "cuda" in text:
++        return "cuda"
++    if any(token in text for token in ("http", "connection", "connecttimeout", "readtimeout", "request")):
++        return "http"
++    if any(token in text for token in ("parse", "json", "decode")):
++        return "parse"
++    return "other"
++
++
+ def _parse_doc_id_time_window(doc_id: str) -> tuple[int, int]:
+     parts = str(doc_id).split("_")
+     if len(parts) != 2:
+@@ -95,7 +109,11 @@ class VisualRetrieveAliasTool(Tool):
+             k = env_int_first(("VISUAL_RETRIEVE_TOPK", "SEMANTIC_RETRIEVE_TOPK"), 100) if top_k is None else int(top_k)
+ 
+             mix = (os.getenv("SEMANTIC_RETRIEVE_MIX") or "embed").lower()
+-            if mix == "bm25":
++            if mix in ("siglip", "local_siglip", "hourvideo_siglip"):
++                from videoseal.utils.RAG.rag_query_siglip import query_siglip
++
++                hits = query_siglip(idx_dir, query, video_id=video_id, topk=k)
++            elif mix == "bm25":
+                 hits = query_bm25(idx_dir, query, topk=k)
+             elif mix == "weighted":
+                 w_e = env_float_strict("RETRIEVE_EMBED_WEIGHT", 0.5)
+@@ -138,7 +156,13 @@ class VisualRetrieveAliasTool(Tool):
+ 
+             enabled_raw = os.getenv("VISUAL_RETRIEVE_SUMMARY_ENABLED") or os.getenv("RETRIEVE_SUMMARY_ENABLED") or "0"
+             enabled = str(enabled_raw).strip().lower() in ("1", "true", "yes", "on")
+-            return_spans = env_flag("VISUAL_RETRIEVE_RETURN_SPANS", default=False)
++            # HourVideo SigLIP shards have frame vectors but no captions, so
++            # their timestamp windows must be visible to the agent.
++            return_spans = env_flag("VISUAL_RETRIEVE_RETURN_SPANS", default=False) or mix in (
++                "siglip",
++                "local_siglip",
++                "hourvideo_siglip",
++            )
+             log_spans = env_flag("VISUAL_RETRIEVE_LOG_SPANS", default=False)
+             log_meta = (
+                 {"spans": [{"start_time": it.get("start_time", ""), "end_time": it.get("end_time", "")} for it in out_items]} if log_spans else None
+@@ -171,7 +195,30 @@ class VisualRetrieveAliasTool(Tool):
+                 candidates=out_items,
+                 max_useful=max_useful,
+             )
+-            text = cli.generate_text(prompt, response_json=False, max_tokens=sum_max_tokens, temperature=sum_temperature) or ""
++            model_started = time.monotonic()
++            try:
++                text = cli.generate_text(prompt, response_json=False, max_tokens=sum_max_tokens, temperature=sum_temperature) or ""
++            except Exception as exc:
++                return ToolOutput(
++                    self.name,
++                    error=format_exception_with_request_id(exc),
++                    metadata={
++                        "model_elapsed_sec": round(time.monotonic() - model_started, 6),
++                        "prompt_tokens": 0,
++                        "completion_tokens": 0,
++                        "total_tokens": 0,
++                        "visual_request_count": 1,
++                        "error_type": _metrics_error_type(exc),
++                    },
++                )
++            usage = cli.get_last_usage() or {}
++            request_metrics = {
++                "model_elapsed_sec": round(time.monotonic() - model_started, 6),
++                "prompt_tokens": int(usage.get("prompt_tokens") or 0),
++                "completion_tokens": int(usage.get("completion_tokens") or 0),
++                "total_tokens": int(usage.get("total_tokens") or 0),
++                "visual_request_count": 1,
++            }
+             parsed = parse_hhmmss_spans_from_text(str(text))
+             allow = {(str(it.get("start_time") or "").strip(), str(it.get("end_time") or "").strip()) for it in out_items}
+             want = [p for p in parsed if p in allow]
+@@ -195,6 +242,8 @@ class VisualRetrieveAliasTool(Tool):
+                 out_obj["useful_spans"] = useful_spans
+             if log_spans:
+                 log_meta = {"spans": useful_spans}
++            log_meta = dict(log_meta or {})
++            log_meta.update(request_metrics)
+             return ToolOutput(self.name, output=out_obj, metadata=log_meta)
+         except Exception as e:
+             return ToolOutput(self.name, error=format_exception_with_request_id(e))
+@@ -303,6 +352,9 @@ class VisualInspectAliasTool(Tool):
+                 if not frames_all:
+                     return ToolOutput(self.name, error="no frames extracted for spans")
+ 
++                decoded_frame_count = sum(len(items) for items in per_span_frames)
++                candidate_frame_count = decoded_frame_count
++
+                 dyn_edge_enabled = env_flag("VISUAL_INSPECT_DYNAMIC_MAX_LONG_EDGE", default=False) or env_flag(
+                     "INSPECT_DYNAMIC_MAX_LONG_EDGE", default=False
+                 )
+@@ -347,6 +399,7 @@ class VisualInspectAliasTool(Tool):
+                 cli = build_mllm_client_from_env_prefix("VISUAL_INSPECT")
+                 max_tok = env_int_strict("INSPECT_VLM_MAX_TOKENS", 800)
+                 temp = env_float_strict("INSPECT_VLM_TEMPERATURE", 0.0)
++                model_started = time.monotonic()
+                 answer_text = cli.generate_images_paths(
+                     frames_all,
+                     prompt,
+@@ -355,11 +408,25 @@ class VisualInspectAliasTool(Tool):
+                     max_tokens=max_tok,
+                     temperature=temp,
+                 )
++                usage = cli.get_last_usage() or {}
+                 output = {
+                     "answer": str(answer_text or "").strip(),
+                     "spans": [{"start_time": sec_to_hhmmss(a), "end_time": sec_to_hhmmss(b)} for (a, b) in win_list],
+                 }
+-                return ToolOutput(self.name, output=output)
++                return ToolOutput(
++                    self.name,
++                    output=output,
++                    metadata={
++                        "image_count": len(frames_all),
++                        "decoded_frame_count": decoded_frame_count,
++                        "candidate_frame_count": candidate_frame_count,
++                        "sent_image_count": len(frames_all),
++                        "unique_sent_timestamp_count": len({round(float(x), 3) for x in ts_all}),
++                        "image_timestamps": [round(float(x), 3) for x in ts_all],
++                        "model_elapsed_sec": round(time.monotonic() - model_started, 6),
++                        "usage": usage,
++                    },
++                )
+             finally:
+                 cleanup_dir_tree(frames_dir, enabled=True, label="FRAMES")
+         except Exception as e:
+diff --git a/videoseal/utils/agent/trajectory.py b/videoseal/utils/agent/trajectory.py
+index 8ababf7..c4deefb 100644
+--- a/videoseal/utils/agent/trajectory.py
++++ b/videoseal/utils/agent/trajectory.py
+@@ -21,6 +21,7 @@ class Step:
+     action: Dict[str, Any] | None = None
+     observation: Dict[str, Any] | None = None
+     usage: Dict[str, Any] | None = None
++    timing: Dict[str, Any] = field(default_factory=dict)
+ 
+ 
+ @dataclass
+@@ -39,4 +40,3 @@ class Trajectory:
+     finished_at: str | None = None
+     elapsed_sec: float | None = None
+     note: str | None = None
+-
+diff --git a/videoseal/utils/api/mllm.py b/videoseal/utils/api/mllm.py
+index 66c6b03..468cdf9 100644
+--- a/videoseal/utils/api/mllm.py
++++ b/videoseal/utils/api/mllm.py
+@@ -82,6 +82,12 @@ class MLLMClient:
+                 return fn()
+             except Exception as e:
+                 last_exc = e
++                # OOM is deterministic for a given visual request. Retrying it
++                # fragments the allocator and wastes the remaining job time;
++                # let the runner record the UID for an end-of-run retry pass.
++                msg = str(e).lower()
++                if "cuda out of memory" in msg or "outofmemoryerror" in msg:
++                    raise
+                 if i < self._retry_times - 1:
+                     try:
+                         base_url = getattr(self._adapter, "base_url", None)
+diff --git a/videoseal/utils/api/router.py b/videoseal/utils/api/router.py
+index 44c0ef3..abcc8aa 100644
+--- a/videoseal/utils/api/router.py
++++ b/videoseal/utils/api/router.py
+@@ -153,13 +153,13 @@ class OpenAIChatAdapter(BaseAdapter):
+             resp.raise_for_status()
+             data = resp.json()
+         except requests.HTTPError as e:
+-            try:
+-                if getattr(e, "response", None) is not None:
+-                    rid = extract_request_id_from_headers(getattr(e.response, "headers", None))
+-                    rid_part = f" request_id={rid}" if rid else ""
+-                    raise RuntimeError(f"OpenAI-compatible error {e.response.status_code}{rid_part}: {e.response.text[:5000]}") from e
+-            except Exception:
+-                pass
++            response = getattr(e, "response", None)
++            if response is not None:
++                rid = extract_request_id_from_headers(getattr(response, "headers", None))
++                rid_part = f" request_id={rid}" if rid else ""
++                raise RuntimeError(
++                    f"OpenAI-compatible error {response.status_code}{rid_part}: {response.text[:5000]}"
++                ) from e
+             raise
+ 
+         self.last_response = data if isinstance(data, dict) else {"raw": data}

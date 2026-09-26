@@ -1,0 +1,143 @@
+{
+  "schema_version": "gens_v3_direct_parser_aligned_original_contract_export_v1",
+  "source_experiment_id": "gens_haiku_structured_answer_v3_direct_parser_aligned_eval300",
+  "system_prompt_verbatim": "You are a long-video evidence-reasoning agent.\n\nAnswer one multiple-choice question about a long video.\nYou receive the question, options A-E, and provided original\nvideo frames. The provided video frames are presented in\nchronological order.\n\nThe goal is to select the option best supported by the\navailable evidence, not exhaustive verification or proving\nevery alternative false. If the provided video frames do not\nfully resolve the question, answer from the best available\nevidence.\n\nReturn exactly one structured external action. For\nfinal_answer, select exactly one of A, B, C, D, E and give\none short sentence stating only the basis. Do not provide\na verbose reasoning trace.",
+  "system_prompt_terminal_newline_in_file": true,
+  "user_question_options_template": "Question: {question}\nOptions:\nA. {options[A]}\nB. {options[B]}\nC. {options[C]}\nD. {options[D]}\nE. {options[E]}\nReturn the final_answer action.",
+  "user_question_text_function_source": "def user_question_text(row: dict[str, Any]) -> str:\n    options = row[\"options\"]\n    return (\n        f\"Question: {row['question']}\\n\"\n        \"Options:\\n\"\n        + \"\\n\".join(f\"{choice}. {options[choice]}\" for choice in \"ABCDE\")\n        + \"\\nReturn the final_answer action.\"\n    )\n",
+  "image_organization": {
+    "order": "all image blocks first in global chronological timestamp order, then one question/options text block",
+    "formal_input_count_rule": "1-16 selected frames per question",
+    "transport": "verbatim_original_jpeg_bytes_base64_no_resize_no_thumbnail",
+    "per_image_block": {
+      "type": "image",
+      "source": {
+        "type": "base64",
+        "media_type": "image/jpeg",
+        "data": "<verbatim original JPEG bytes, base64>"
+      }
+    },
+    "timestamp_text_sent": false,
+    "selection_metadata_sent": false
+  },
+  "request_builder_function_source": "def build_structured_request(\n    row: dict[str, Any], config: StructuredV3Config, *, encode_images: bool = True\n) -> tuple[dict[str, Any], list[dict[str, Any]]]:\n    frames = resolve_frames(row, Path(config.frame_root), verify_sha=True)\n    content: list[dict[str, Any]] = []\n    for frame in frames:\n        data = (\n            base64.b64encode(Path(frame[\"path\"]).read_bytes()).decode(\"ascii\")\n            if encode_images\n            else \"<validated-jpeg-bytes>\"\n        )\n        content.append({\n            \"type\": \"image\",\n            \"source\": {\"type\": \"base64\", \"media_type\": \"image/jpeg\", \"data\": data},\n        })\n    content.append({\"type\": \"text\", \"text\": user_question_text(row)})\n    return {\n        \"model\": config.model,\n        \"max_tokens\": config.max_output_tokens,\n        \"temperature\": config.temperature,\n        \"system\": config.system_prompt,\n        \"messages\": [{\"role\": \"user\", \"content\": content}],\n        \"tools\": [tool_schema()],\n        \"tool_choice\": dict(config.tool_choice),\n    }, frames\n",
+  "tool_schema": {
+    "name": "final_answer",
+    "description": "Finish with exactly one answer option.",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selected_option_id": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      },
+      "required": [
+        "selected_option_id",
+        "reason"
+      ]
+    }
+  },
+  "model_parameters": {
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5-20251001",
+    "max_output_tokens": 512,
+    "temperature": 0.0,
+    "timeout_sec": 120.0,
+    "tool_choice": {
+      "type": "any"
+    },
+    "single_turn": true
+  },
+  "cache": {
+    "policy": "disabled_no_stable_large_prefix_single_turn_question_specific_request",
+    "cache_control_in_request": false,
+    "formal_observed_cache_creation_tokens": 0,
+    "formal_observed_cache_read_tokens": 0
+  },
+  "retry": {
+    "max_retries": 1,
+    "maximum_transport_attempts": 2,
+    "retry_scope": "provider errors only; first response_received is terminal even when parser-invalid",
+    "answer_repair_turn": false
+  },
+  "parser_function_source": "def parse_structured_response(content: Any) -> dict[str, Any]:\n    \"\"\"Apply Direct's actual final-answer parsing; never infer from free text.\n\n    The provider tool schema retains its ``maxLength=240`` guidance, but the\n    frozen Direct-v1.2 Python path does not revalidate that upper bound.  It\n    converts option/reason values with ``str()``, rejects a blank/whitespace\n    reason, ignores additional tool-input keys, and lets the controller enforce\n    the A--E option set.  GenS v3 mirrors those effective semantics here while\n    retaining its single-turn/no-correction protocol.\n    \"\"\"\n    blocks = list(content or [])\n    tool_blocks = [block for block in blocks if _field(block, \"type\") == \"tool_use\"]\n    non_tool_blocks = [block for block in blocks if _field(block, \"type\") != \"tool_use\"]\n    text = \"\".join(str(_field(block, \"text\", \"\")) for block in non_tool_blocks if _field(block, \"type\") == \"text\")\n    base = {\n        \"tool_use_count\": len(tool_blocks),\n        \"content_block_types\": [_field(block, \"type\") for block in blocks],\n        \"accompanying_text\": text,\n        \"tool_name\": None,\n        \"tool_use_id\": None,\n        \"tool_input_runtime_type\": None,\n        \"normalised_tool_input\": None,\n        \"prediction\": None,\n        \"reason\": None,\n    }\n    if not tool_blocks:\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"missing_tool_call\"}\n    if len(tool_blocks) != 1:\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"multiple_tool_calls\"}\n    if non_tool_blocks:\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"tool_plus_text_or_other_content\"}\n    block = tool_blocks[0]\n    name = _field(block, \"name\")\n    identifier = _field(block, \"id\")\n    native_input = _field(block, \"input\")\n    normalized = normalise_tool_input(native_input)\n    base.update({\n        \"tool_name\": name,\n        \"tool_use_id\": identifier,\n        \"tool_input_runtime_type\": type(native_input).__name__,\n        \"normalised_tool_input\": normalized,\n    })\n    if name != \"final_answer\":\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"wrong_tool_name\"}\n    if not isinstance(identifier, str) or not identifier:\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"missing_tool_use_id\"}\n    if normalized is None:\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"invalid_tool_input_type\"}\n    option = str(normalized.get(\"selected_option_id\", \"\"))\n    reason = str(normalized.get(\"reason\", \"\"))\n    base[\"reason\"] = reason\n    # Direct's FinalAnswerAction validates the reason before the controller\n    # validates the option, so preserve that order for mixed-invalid inputs.\n    if not reason.strip():\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"invalid_reason\"}\n    if option not in CHOICES:\n        return {**base, \"result_class\": \"invalid_format\", \"failure_category\": \"invalid_option\"}\n    return {**base, \"prediction\": option, \"result_class\": \"valid_answer\", \"failure_category\": None}\n",
+  "parser_effective_rules": "exactly one final_answer tool_use and no non-tool blocks; Direct-effective str conversion; nonblank reason with no local upper bound; extra tool-input fields ignored; A-E only; no text extraction",
+  "reason_length_note": "schema advertises maxLength=240, but the actual local parser neither enforces nor truncates it",
+  "formal_preflight_prompt_spec": {
+    "system_prompt": "You are a long-video evidence-reasoning agent.\n\nAnswer one multiple-choice question about a long video.\nYou receive the question, options A-E, and provided original\nvideo frames. The provided video frames are presented in\nchronological order.\n\nThe goal is to select the option best supported by the\navailable evidence, not exhaustive verification or proving\nevery alternative false. If the provided video frames do not\nfully resolve the question, answer from the best available\nevidence.\n\nReturn exactly one structured external action. For\nfinal_answer, select exactly one of A, B, C, D, E and give\none short sentence stating only the basis. Do not provide\na verbose reasoning trace.",
+    "user_message": "chronological original JPEG image blocks, then Question/Options A-E/Return the final_answer action",
+    "tool": {
+      "name": "final_answer",
+      "description": "Finish with exactly one answer option.",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "selected_option_id": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "required": [
+          "selected_option_id",
+          "reason"
+        ]
+      }
+    },
+    "tool_choice": {
+      "type": "any"
+    },
+    "parser": "exactly one final_answer tool_use and no non-tool blocks; Direct-effective str conversion; nonblank reason with no local upper bound; extra tool-input fields ignored; A-E only; no text extraction",
+    "design_note": "Direct-v1.2 final-answer rule adapted to frozen GenS frames; map/navigation/inspection removed."
+  },
+  "historical_and_current_sha256": {
+    "formal_config": "bc647345593fb23eebaac87201fb064bb72735f6a7fcc8104fc16023ed31a287",
+    "formal_preflight_manifest": "a2eae93163df6b4ccb78e9ddd236d8ccf6dc1ba0c918468564f970b65a240c93",
+    "system_prompt_file": "ea841c205ea7d88cf40bae05d2b88cdecea2235047845ff08a80ca5afb8721b8",
+    "structured_v3_runtime": "f92cb727556038ef018d9af6cbdae95f5bc255484c370e57e3657fb870be127f",
+    "provider_transport_base": "b59aa200f4a2a9d222375898f0b0c69b1471016b1bfe5f4bc3b174af25da1617",
+    "formal_runner": "f55a0626f357dfd25a261560f72f5c67ece97d7939c22fe1e06d9bd96f1f510e",
+    "formal_scorer": "529358bb2b6e2918324f9ece235a33c7ac276bc2b074841ea5175a8b3a1615fb",
+    "direct_final_manifest": "c73aeaf41d5bf284ade54198525d8396bf3a9fa5e45587aedd49dd3744dc557d",
+    "direct_config": "581f7bb119660096820011bea6c03970c6af3391f3a2a3bff428377ff77f4c8a"
+  },
+  "formal_preflight_fingerprints": {
+    "config_sha256": "bc647345593fb23eebaac87201fb064bb72735f6a7fcc8104fc16023ed31a287",
+    "runtime_sha256": "f92cb727556038ef018d9af6cbdae95f5bc255484c370e57e3657fb870be127f",
+    "shared_runtime_sha256": "4b376eb07aee971ba5b542600867a6e6d584f7bd9a73bf5aa79c27f4d366d960",
+    "provider_base_sha256": "b59aa200f4a2a9d222375898f0b0c69b1471016b1bfe5f4bc3b174af25da1617",
+    "system_prompt_sha256": "ea841c205ea7d88cf40bae05d2b88cdecea2235047845ff08a80ca5afb8721b8",
+    "runner_sha256": "f55a0626f357dfd25a261560f72f5c67ece97d7939c22fe1e06d9bd96f1f510e",
+    "preflight_sha256": "53ea1e2a8bdb5d5ac75eab2f0c85cb1e15fab8efc44a3ac5c837a29af47af336",
+    "selector_sha256": "016e078a147215864fd978e30be7820bc741be694948d68e458383473af96587",
+    "uid_order_sha256": "6db7b3cc672919a60c4b0c4a84f9f2e039e1673bdeddcfe619fdce92f1cb6fa1",
+    "canonical_population_manifest_sha256": "25d98f2e0140ef0a85fcbd66fb40b9e844ed79e64e4d28cfecab1a74805aa859",
+    "tool_schema_sha256": "87a6224862d668c1b22ec3870d0ca14c1da7c4255cc43eb325abfb4a58ed800d",
+    "prompt_spec_sha256": "3e6217626de1d76d1ee34586fdafe8bd8643668fac2527dec1ae8088dc67fb8b"
+  },
+  "api_calls": 0
+}

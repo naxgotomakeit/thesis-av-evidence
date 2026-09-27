@@ -1,80 +1,48 @@
 # Thesis AV Evidence
 
-Research code for efficient audio-visual evidence selection for egocentric
-long-video question answering.
+This repository is the examiner-facing evidence record for a master's thesis on efficient audio-visual evidence selection for egocentric long-video question answering. It contains the maintained canonical baseline and preserved, auditable artifacts for the formal experiments reported in the dissertation.
 
-## Canonical Baseline v1
+The project developed from reusable audio-visual indexing and hierarchical retrieval into HourVideo and EgoPolice evaluations. Later formal runs occurred on school, DGX, and Myriad compute environments; their preserved outputs were subsequently imported without rewriting their experimental lineage. The import date is not an experiment date.
 
-The current executable baseline separates reusable offline indexing from the
-per-question online path:
+## How to read this repository
 
-```text
-offline reusable multimodal indexing
-  -> question planning
-  -> fresh question-conditioned query encoding and modality-aware retrieval
-  -> local refinement
-  -> evidence sufficiency / conditional fallback
-  -> relation-aware reranking
-  -> compact evidence packet
-  -> final grounded QA with uncertainty
-```
+Start with [the thesis artifact index](THESIS_ARTIFACT_INDEX.md). It maps thesis locations to the narrowest available code, configuration, result, per-question evidence, and freeze record. The accompanying guides explain [which result is authoritative](docs/RESULT_AUTHORITY.md), [the research evolution](docs/EXPERIMENT_OVERVIEW.md), [reproduction boundaries](docs/REPRODUCTION.md), and [Git/compute history](docs/GIT_HISTORY.md).
 
-Canonical research versions:
+## Repository structure
 
-- Task 5A v2
-- Task 5B v1.1
-- Task 5C v1.2
-- Task 6 v1.2
-- Task 7A v1
-- Task 7B v3 (historical on-disk outputs may use `task7b_v0_3`)
+- `src/`, `config/`, `configs/`, `scripts/`, `tests/` — maintained canonical AV-QA baseline and regression material.
+- `experiments/hourvideo/` — immutable archival packages for HourVideo formal results, audit chains, and supplementary/appendix evidence.
+- `experiments/egopolice/` — immutable Layer-1 case-study evidence and separate Layer-2 final-figure provenance.
+- `provenance/` — machine-readable experiment registry.
 
-The source of truth is
-[config/canonical_pipeline.json](config/canonical_pipeline.json).
-Historical Task scripts remain intact as the research-development lineage and
-are imported where their validated helpers are canonical dependencies. The
-`src/canonical_pipeline/` package is the separate executable baseline; it does
-not execute historical correction versions as sequential runtime stages.
-The generalized runner accepts an explicit case manifest and scores reusable
-offline visual, transcript, and acoustic indexes directly. Historical Task 4
-per-question score files are retained only for regression comparison, never as
-a prerequisite for a new question. Selected acoustic intervals are materialized
-to local WAV evidence on demand using the final Task 5C v1.2 behavior.
-Technical producer/consumer validation additionally enforces complete evidence
-group membership, relation endpoint closure and uniqueness, globally unique
-model-facing evidence IDs, per-video index compatibility, and an exact Task7A
-to Task7B v3 schema contract. These checks stabilize serialization and
-reproducibility; they do not change evidence ranking or selection policy.
+Repeated frozen code, prompts, configurations, and manifests across archival packages are intentional provenance, not a new shared runtime.
 
-## Setup
+## Thesis result map
 
-Create a Python environment with the project dependencies, copy `.env.example`
-to a local `.env`, and provide credentials only in that ignored file or through
-process environment variables. Copy the required `configs/*.example` templates
-to their non-example names and configure local dataset/model-cache paths.
+| Thesis result family | Authoritative entry point | Status |
+|---|---|---|
+| Flat / Dense H comparison | [final comparison archive](experiments/hourvideo/dgx_eval300/reports/main_comparison/FINAL_H15_VS_FLAT_DATA_ARCHIVE.md) | formal main |
+| Capacity-aware R1/R3 and paired-150 | [thesis report](experiments/hourvideo/school_formal/content/capacity_aware_eval300_paired150/reports/thesis_data_report.md) | formal main / derived analysis |
+| API Planner R1/R3 | [canonical report](experiments/hourvideo/api_planner_local_eval300/artifacts/formal_run/canonical_summary_v2/thesis_data_report.md) | thesis-authoritative |
+| Direct R1/R3 | [visual-only thesis data](experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/thesis_data_package/DIRECT_VISUAL_ONLY_EVAL300_DATA_SUMMARY.md) | thesis-authoritative |
+| GenS / ABD / evidence support | [GenS](THESIS_ARTIFACT_INDEX.md#hourvideo-results) / [ABD and audit](THESIS_ARTIFACT_INDEX.md#abd-and-evidence-support-audit) | see index |
+| EgoPolice Figures 5.2–5.3 | [figure binding](experiments/egopolice/figure_layer2_provenance/FIGURE_BINDING.json) | thesis-authoritative figure provenance |
 
-The EgoSound dataset, QA manifests/annotations, raw media, generated indexes,
-embeddings, model weights and experiment outputs are intentionally not included
-in Git. See [data/README.md](data/README.md) for the expected local layout.
+Formal QaEgo4D E1/E2 evidence is linked in [the index](THESIS_ARTIFACT_INDEX.md#qaego4d-formal-frozen-experiments).
 
-Zero-call regression:
+## Important authority notes
 
-```bash
-python scripts/canonical/run_regression.py
-python scripts/canonical/run_case.py --case-id 00006_3
-```
+- Direct R1 for the thesis is **85/300**, not the earlier 88/300 result.
+- ABD's `E0001`–`E0900` audit namespace is distinct from the historical R1/R3/GenS `E0001`–`E0900` namespace.
+- paired-150 is a read-only extraction/recomputation from capacity-aware Eval300 records, not an independent 150-question run.
+- Figure 5.3(c) uses `q_medical_assistance`; `q_handcuff_before_medical` is a distinct identity.
 
-Live execution remains explicitly gated behind `--execute-live`. Provider keys
-are loaded from ignored local environment configuration. Gold/reference answers
-are post-hoc only and never enter the canonical online state.
+The thesis identifies the reported version; frozen artifacts record each run. Disagreements must be recorded explicitly; see [result authority](docs/RESULT_AUTHORITY.md).
 
-## Status
+## Reproduction boundary
 
-Current status: **Canonical Baseline v1**. Deterministic regression and the
-first two-case integrated live verification passed without a category-4
-research-behavior mismatch. This is not yet a full benchmark result. The
-repository makes no SOTA claim and does not yet claim a proven accuracy or
-efficiency improvement.
+The repository intentionally excludes benchmark source media, complete frame pools, model weights, caches, large embeddings/index payloads, credentials, and material whose redistribution status is not confirmed. This does not remove the retained result, per-question, manifest, and checksum evidence. See [reproduction guidance](docs/REPRODUCTION.md) and [data / third-party attribution](docs/ATTRIBUTION.md).
 
-Generated outputs, local media, embeddings, model weights, caches and secrets
-are excluded from Git. See [CURRENT_BASELINE.md](CURRENT_BASELINE.md) for source
-lineage and integration status.
+## Git history
+
+The July–August Git history records active development. Formal experiments later ran directly in several compute environments, then their preserved artifacts were archived in commits dated 2026-09-26 and 2026-09-27. Preserved author/committer dates and branch lineage are described in [Git history](docs/GIT_HISTORY.md).

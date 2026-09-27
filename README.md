@@ -6,6 +6,8 @@ The project developed from reusable audio-visual indexing and hierarchical retri
 
 ## How to read this repository
 
+For multilingual frozen reports, use the [English reading guide](docs/ENGLISH_READING_GUIDE.md). It provides English summaries while preserving the original evidence bytes.
+
 Start with [the thesis artifact index](THESIS_ARTIFACT_INDEX.md). It maps thesis locations to the narrowest available code, configuration, result, per-question evidence, and freeze record. The accompanying guides explain [which result is authoritative](docs/RESULT_AUTHORITY.md), [the research evolution](docs/EXPERIMENT_OVERVIEW.md), [reproduction boundaries](docs/REPRODUCTION.md), and [Git/compute history](docs/GIT_HISTORY.md).
 
 ## Repository structure
@@ -21,10 +23,10 @@ Repeated frozen code, prompts, configurations, and manifests across archival pac
 
 | Thesis result family | Authoritative entry point | Status |
 |---|---|---|
-| Flat / Dense H comparison | [final comparison archive](experiments/hourvideo/dgx_eval300/reports/main_comparison/FINAL_H15_VS_FLAT_DATA_ARCHIVE.md) | formal main |
+| Flat / Dense H comparison | [final comparison archive — English summary](docs/english/DGX_RESULTS.md) ([frozen original](experiments/hourvideo/dgx_eval300/reports/main_comparison/FINAL_H15_VS_FLAT_DATA_ARCHIVE.md)) | formal main |
 | Capacity-aware R1/R3 and paired-150 | [thesis report](experiments/hourvideo/school_formal/content/capacity_aware_eval300_paired150/reports/thesis_data_report.md) | formal main / derived analysis |
 | API Planner R1/R3 | [canonical report](experiments/hourvideo/api_planner_local_eval300/artifacts/formal_run/canonical_summary_v2/thesis_data_report.md) | thesis-authoritative |
-| Direct R1/R3 | [visual-only thesis data](experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/thesis_data_package/DIRECT_VISUAL_ONLY_EVAL300_DATA_SUMMARY.md) | thesis-authoritative |
+| Direct R1/R3 | [visual-only thesis data — English summary](docs/english/DIRECT_R1.md) ([frozen original](experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/thesis_data_package/DIRECT_VISUAL_ONLY_EVAL300_DATA_SUMMARY.md)) | thesis-authoritative |
 | GenS / ABD / evidence support | [GenS](THESIS_ARTIFACT_INDEX.md#hourvideo-results) / [ABD and audit](THESIS_ARTIFACT_INDEX.md#abd-and-evidence-support-audit) | see index |
 | EgoPolice Figures 5.2–5.3 | [figure binding](experiments/egopolice/figure_layer2_provenance/FIGURE_BINDING.json) | thesis-authoritative figure provenance |
 

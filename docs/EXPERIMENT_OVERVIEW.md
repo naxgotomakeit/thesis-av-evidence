@@ -21,9 +21,9 @@ canonical AV-QA baseline → visual hierarchy / semantic coarse → EgoPolice ex
 | Direct visual-only 85 and R3 | THESIS-AUTHORITATIVE | [thesis package](../experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/thesis_data_package/) |
 | GenS V2 selector | dependency snapshot / selector evidence | [Myriad package](../experiments/hourvideo/myriad_gens_v2/README.md) |
 | GenS Haiku v3 | FORMAL-MAIN | `experiments/hourvideo/school_formal/content/gens_haiku_v3/` |
-| Full Staged R3 vs Direct R3 paired-100 | SUPPLEMENTARY | [results](../experiments/hourvideo/school_formal/content/supplementary/full_staged_paired100/reports/thesis_package/PAIRED100_THESIS_RESULTS.md) |
+| Full Staged R3 vs Direct R3 paired-100 | SUPPLEMENTARY | [results — English summary](english/PAIRED100.md) ([frozen original](../experiments/hourvideo/school_formal/content/supplementary/full_staged_paired100/reports/thesis_package/PAIRED100_THESIS_RESULTS.md)) |
 | ABD A/B/D and final audit | FORMAL-MAIN / evidence support | [final metrics](../experiments/hourvideo/abd_evidence_audit/content/abd_lineage/05_final_authoritative_900/ABD_FINAL_METRICS.md) |
-| Historical R1/R3/GenS audit | HISTORICAL-ONLY comparison | [audit report](../experiments/hourvideo/abd_evidence_audit/content/historical_r1_r3_gens_audit_900/audit/EVIDENCE_AUDIT_REPORT.md) |
+| Historical R1/R3/GenS audit | HISTORICAL-ONLY comparison | [audit report — English summary](english/HISTORICAL_AUDIT.md) ([frozen original](../experiments/hourvideo/abd_evidence_audit/content/historical_r1_r3_gens_audit_900/audit/EVIDENCE_AUDIT_REPORT.md)) |
 | EgoPolice figures | thesis figure provenance | [Layer 2 binding](../experiments/egopolice/figure_layer2_provenance/FIGURE_BINDING.json) |
 
 `DO-NOT-CITE` marks material that must not support a formal result claim, including invalid/superseded analyses explicitly marked “do not use.” Smoke and preliminary records may still document development; cite their historical role explicitly. Repeated frozen runtime/config copies remain in their original packages as provenance.

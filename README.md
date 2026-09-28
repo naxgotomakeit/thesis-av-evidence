@@ -10,6 +10,25 @@ For multilingual frozen reports, use the [English reading guide](docs/ENGLISH_RE
 
 Start with [the thesis artifact index](THESIS_ARTIFACT_INDEX.md). It maps thesis locations to the narrowest available code, configuration, result, per-question evidence, and freeze record. The accompanying guides explain [which result is authoritative](docs/RESULT_AUTHORITY.md), [the research evolution](docs/EXPERIMENT_OVERVIEW.md), [reproduction boundaries](docs/REPRODUCTION.md), and [Git/compute history](docs/GIT_HISTORY.md).
 
+## Demo
+
+API-Planner + Local Downstream Frozen Pipeline Replay:
+
+```bash
+python3 demo/run_demo.py --mode replay-staged
+```
+
+Frozen Direct tool-use and answer replay:
+
+```bash
+python3 demo/run_demo.py --mode replay-direct
+```
+
+Both modes read preserved records without inference, media, API keys or network.
+`--mode live` exits explicitly: full fresh live execution is not implemented.
+For evidence coverage, integrity checks and future reproduction requirements, see the
+[demo guide](demo/README.md) and [usage guide](docs/USAGE.md).
+
 ## Repository structure
 
 - `src/`, `config/`, `configs/`, `scripts/`, `tests/` — maintained canonical AV-QA baseline and regression material.

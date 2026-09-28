@@ -53,6 +53,7 @@ python3 demo/run_demo.py --mode live
 This exits with status 2 and explicitly states that full live mode is not
 implemented through this launcher. It does not read credentials or assets and cannot send API requests.
 The earlier `live-direct` adapter and its flags are no longer supported.
+The new portable prototype uses separate `prepare.py` and `ask.py` commands below.
 
 ## What the replays show
 
@@ -99,17 +100,140 @@ Planner and post-Planner totals remain separate; their latencies are not added
 into a claimed continuous end-to-end measurement. Direct ordinary input,
 cache-write input and cache-read input remain separately labelled.
 
-## Planned full live scope and reproduction requirements
+## Portable API-assisted execution
 
-Future `live` means a **full fresh execution**: a new question/context session,
+Use Python 3.10+ and install `ffmpeg`/`ffprobe` through your operating system.
+No Python packages or local GPU are required. Only use media you are authorized
+to process and send to the API provider. This prototype accepts videos up to
+10 minutes and workspaces strictly below the repository's ignored `demo_runs/`.
+No benchmark media is redistributed.
+
+### Prepare and approve
+
+```bash
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/example --caption-backend api
+```
+
+This runs local 1-FPS extraction (JPEG quality scale 6, no resize), checksums every
+frame, builds 15-second Fine and 45-second Medium windows, and constructs caption
+requests without sending them. Representatives are Fine-center frames in temporal
+order, including partial final windows. Effective hierarchy duration is the frame
+count in seconds; container duration is recorded separately. Coarse count is
+determined by Organizer output, not fixed.
+
+The printed plan reports duration, frame/window counts, paid call counts, models,
+cost assumptions and a plan SHA. Review it before authorizing execution. Set
+`ANTHROPIC_API_KEY` through your environment or secret manager; never pass a key
+as a command-line argument. No `.env` file is read or created.
+
+```bash
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/example --caption-backend api --execute --approve-plan <reviewed-plan-sha256>
+```
+
+Execution makes one caption request per Medium and one Organizer request. The
+action-preserving caption prompt is pinned; its API backend is a **portable
+substitute** for Qwen2.5-VL-7B-Instruct, not an exact thesis reproduction.
+Organizer uses the exact frozen Variant-C system prompt, schema, temperature,
+model and output-token cap. Caption text is not fabricated during dry-run:
+Organizer's actual input can only be constructed after captions complete.
+Invalid/incomplete Organizer output stops preparation; no fallback segmentation
+or automatic repair is applied. Native R3 conversion reuses the pinned pure
+conversion function without importing its server-dependent surrounding module.
+
+Every workspace and plan records `preparation_profile=PORTABLE_API`,
+`caption_backend=API`, actual `caption_model=claude-haiku-4-5-20251001`,
+`thesis_caption_model=Qwen2.5-VL-7B-Instruct`,
+`model_identity_matches_thesis=false`, `full_historical_embedding_index=false`,
+and `direct_targeted_preparation=true`. `local-qwen` and `remote-qwen` are reserved
+backend interfaces and currently exit without execution.
+
+### Ask a fresh question
+
+After successful preparation, create your own question JSON with no gold labels:
+
+```json
+{"question_id":"my-question-1","question_text":"Which object was moved?","answer_options":{"A":"Cup","B":"Bowl","C":"Plate","D":"Spoon","E":"Bottle"}}
+```
+
+```bash
+python3 demo/ask.py --workdir demo_runs/example --question-json question.json
+python3 demo/ask.py --workdir demo_runs/example --question-json question.json --execute --approve-plan <reviewed-ask-plan-sha256>
+```
+
+The first command verifies the READY workspace and constructs the original Direct
+system/map/question/tools without inference. The second, separately approved
+command starts a fresh Direct conversation, with no historical answer or inspection
+decision. It imports the preserved loader, resolver, controller and Anthropic agent.
+All extracted frames remain available for new timestamp requests (three new images
+per turn, sixteen unique images total, at most 32 controller turns). It uses the
+preserved smoke-profile USD 1 accounting budget, not an Eval300 launch. A transport
+safety wrapper refuses redirects and resends after an uncertain network failure;
+this deliberately tightens historical retry behavior without changing prompts or
+action semantics. The budget is accounting-based, not a provider billing guarantee.
+
+Prepare once, ask many: each new MCQ starts an empty Direct session. The public
+A–E object is normalized into the archived loader's ordered option rows through
+a temporary file; no prompt, options or answer semantics are changed. Only the
+three illustrated top-level fields are accepted. Gold labels, historical state
+and open-ended questions are rejected. The input question is not added to the
+question-independent preparation workspace.
+
+ASK plans and new answers are saved only in the ignored sibling
+`demo_runs/example-outputs/qa_runs/<plan-sha>/`.
+They are **not thesis results** and have no asserted correctness. The prepared
+workspace is unchanged. Exact repeated execution plans are locked against
+accidental paid reruns; use a new question identity for a deliberately new execution.
+
+### Workspace and integrity
+
+`plan.json`, `request_preview.json`, `shared_hierarchy.json`, `frame_sha256.json`
+and `frames_1fps/` are generated before approval. Paid preparation additionally
+creates `caption_responses/`, `medium_captions.json`, `organizer_request.json`,
+`organizer_response.json`, `organizer_output.json`, `r3_2_navigation_map.json` and
+`preparation_manifest.json`. `EXECUTION_STARTED.json` prevents automatic resume
+after a potentially billed failure. Do not delete the marker to force a retry.
+Review partial execution manually and explicitly authorize a new workspace.
+
+Relative paths permit relocation; the Direct resolver receives absolute paths
+only in memory. The READY manifest hashes all prepared files; ASK checks those
+hashes and the pinned implementation before execution. Source-video SHA, actual
+model identities and source-code SHA bindings remain recorded. Do not edit READY
+workspaces. They contain user media and model responses: keep them private.
+The plan records the source-video SHA, ffmpeg version and relocatable extraction
+command/config. Schema-v2 workspaces do not automatically migrate older prototype
+layouts. A matching unexecuted plan may be reviewed or explicitly approved again;
+an unrelated, incomplete or already executed workdir is refused.
+
+### Planning costs and limitations
+
+At 120 seconds: 120 frames, 8 Fine, 3 Medium, 3 caption calls + 1 Organizer call.
+At 300 seconds: 300 frames, 20 Fine, 7 Medium, 7 caption calls + 1 Organizer call.
+Approximate preparation ranges are USD 0.0067–0.0246 and USD 0.0146–0.0555 respectively
+(heuristics, not measured bills; use the printed plan for computed values).
+ASK is adaptive: budget for roughly 2–8 calls and USD 0.01–0.20 for short examples,
+but it may use one call or more than eight; the transport ceiling is 66 attempts.
+The original Direct accounting budget is USD 1. Preparation also prints a much
+more conservative token-cap accounting allowance; Organizer retains its original
+64k output cap. No paid smoke test has yet validated model availability or billing.
+Pricing assumptions are [Anthropic Haiku 4.5 input/output rates](https://platform.claude.com/docs/en/about-claude/pricing):
+USD 1 / 5 per million tokens, with Direct cache-aware pricing retained separately.
+
+Full historical preparation still requires omitted embeddings/index components
+and historical caption models. This Direct-targeted prototype does not build a
+SigLIP index, process audio, implement a local staged Planner, or recreate thesis results.
+
+## Further reproduction requirements
+
+The portable profile performs a **fresh execution**: a new question/context session,
 new model decisions, authorized evidence access and a new answer. It must never
 be labelled a thesis result or write into preserved evidence. It is not
-implemented in this iteration.
+an exact thesis-preprocessing reproduction: the portable profile above substitutes
+API captioning and is explicitly labelled accordingly.
 
 The existing Direct protocol uses an Anthropic provider and dynamically selected
-timestamps. A future implementation needs authorized benchmark media/frames,
-the exact prepared question/options and native map, verified asset bindings,
-provider access, explicit cost controls and safe output isolation. Full staged
+timestamps. The prototype requires authorized user media, newly prepared native
+context, new question/options, verified asset bindings, provider access, explicit
+cost approval and safe output isolation. Full staged
 execution additionally needs suitable indexes/embeddings, model weights and model
 services. These prerequisites are not supplied by a repository clone alone.
 
@@ -157,7 +281,8 @@ portable application guaranteed to rerun on any laptop. See
   version. Do not edit a frozen package or bypass the manifest.
 - Identity conflict: stop; R1 and R3 records are not interchangeable.
 - `--mode live` returning status 2 is expected, not an API failure.
-- There are no asset/key/output flags in this iteration. CLI errors deliberately
+- Replay commands have no asset/key/output flags. Preparation and ASK accept no
+  command-line API key. CLI errors deliberately
   do not echo supplied values, which could accidentally contain a secret.
 - Run offline tests with
   `python3 -B -m unittest discover -s demo -p 'test_*.py'`.

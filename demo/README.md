@@ -76,13 +76,40 @@ FULL LIVE MODE IS NOT IMPLEMENTED YET.
 See docs/USAGE.md for the planned scope and reproduction requirements.
 ```
 
-The earlier experimental live adapter has been removed. There is no API transport,
-key-loading, asset-loading or output-saving path in the current demo. Obsolete
-`--mode replay`, `--mode live-direct` and live-only flags are rejected.
+This reserved replay-launcher mode remains unavailable. Fresh portable execution
+now has separate `prepare.py` and `ask.py` entrypoints, described below. The earlier
+prepared-continuation adapter remains removed. Obsolete `--mode replay` and
+`--mode live-direct` are rejected.
 
 A small prepared-request continuation may be technically feasible, but it is not
 the definition of future `live`: that mode means full fresh execution. See the
 [usage guide](../docs/USAGE.md) for prerequisites and distinctions.
+
+## Portable API-assisted fresh execution
+
+```bash
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/example --caption-backend api
+python3 demo/ask.py --workdir demo_runs/example --question-json question.json
+```
+
+Each command defaults to **plan-only**, stopping before paid requests. Preparation
+does extract local frames. Read the [portable execution guide](../docs/USAGE.md#portable-api-assisted-execution)
+for approval flags, question schema, output locations and costs. ASK requires a
+successfully prepared workspace; it cannot use a plan-only workspace.
+
+This is `PORTABLE_API`, not exact thesis preprocessing: Anthropic Haiku captions
+substitute for historical Qwen2.5-VL-7B-Instruct. Fine=15 s, Medium=45 s,
+chronological representative frames, the pinned Variant-C Organizer contract,
+native R3 conversion and the preserved Direct online protocol are retained.
+No SigLIP index is built. Python uses the standard library; preparation additionally
+requires `ffmpeg` and `ffprobe`, authorized media and disk space, but no local GPU.
+Paid execution requires environment-only `ANTHROPIC_API_KEY` and explicit approval.
+
+Prepare once, then ask many independent A–E questions. The public question format
+uses `"answer_options": {"A":"...","B":"...","C":"...","D":"...","E":"..."}`;
+a thin adapter translates this object to the preserved loader's ordered option rows.
+READY artifacts remain immutable. ASK plans/results go outside the workspace,
+under ignored `demo_runs/<name>-outputs/qa_runs/<plan-sha>/`.
 
 ## Integrity and offline tests
 

@@ -25,8 +25,19 @@ python3 demo/run_demo.py --mode replay-direct
 ```
 
 Both modes read preserved records without inference, media, API keys or network.
-`--mode live` exits explicitly: full fresh live execution is not implemented.
-For evidence coverage, integrity checks and future reproduction requirements, see the
+For fresh API-assisted preparation and Direct answering (plan-only until approved):
+
+```bash
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/example --caption-backend api
+python3 demo/ask.py --workdir demo_runs/example --question-json question.json
+```
+
+The `PORTABLE_API` caption backend substitutes for the thesis Qwen model; this is
+not exact thesis preprocessing. Paid execution requires environment credentials
+and separate plan approval. The replay launcher's `--mode live` remains reserved.
+Prepare once, then ask independent A–E questions; ASK writes to separate ignored
+`qa_runs/` directories and never changes the prepared workspace or thesis evidence.
+For evidence coverage, integrity checks and reproduction requirements, see the
 [demo guide](demo/README.md) and [usage guide](docs/USAGE.md).
 
 ## Repository structure

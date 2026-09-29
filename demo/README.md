@@ -87,6 +87,13 @@ the definition of future `live`: that mode means full fresh execution. See the
 
 ## Portable API-assisted fresh execution
 
+Public [Wikimedia Live example](example_live/README.md), with separate approval for PREPARE and ASK:
+
+```bash
+python3 demo/run_live_example.py --question audio
+python3 demo/run_live_example.py --question visual
+```
+
 ```bash
 python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/example --caption-backend api
 python3 demo/ask.py --workdir demo_runs/example --question-json question.json

@@ -185,20 +185,36 @@ def caption_backend(name, frozen):
     return ApiCaptionBackend(frozen)
 
 
-def organizer_request(frozen, hierarchy, captions):
+def organizer_request(frozen, hierarchy, captions, segments=None, audio_mode='none'):
+    import audio
+    audio.profile(audio_mode)
+    segments = [] if segments is None else segments
+    require(audio_mode == 'whisper' or not segments, 'Visual-only Organizer requires empty ASR.')
+    aligned = audio.attach(hierarchy['medium_nodes'],segments)
     require(len(captions) == len(hierarchy['medium_nodes']))
     timeline = []
     for index, (medium, caption) in enumerate(zip(hierarchy['medium_nodes'], captions)):
         require(medium['medium_id'] == caption['medium_id'])
         timeline.append({'medium_index':index, 'interval':[medium['start_sec'],medium['end_sec']],
-                         'caption':caption['qwen_caption'], 'overlapping_asr':[]})
+                         'caption':caption['qwen_caption'], 'overlapping_asr':aligned[medium['medium_id']]})
     request = copy.deepcopy(frozen['organizer_request'])
+    if audio_mode == 'whisper':
+        request['system'] = contained(ROOT,audio.SOURCES['prompt'][0]).read_text()
+        config = read(contained(ROOT,audio.SOURCES['config'][0]))
+        require(object_sha(request['output_config']['format']['schema']) == config['provider_schema_canonical_json_sha256'], 'AV Organizer schema differs.')
+        for key in ('model','temperature','max_tokens'):
+            require(request[key] == config[key], 'AV Organizer request settings differ.')
     payload = {'timeline':timeline, 'contract':{'global_view':True, 'storyline':False, 'hard_filtering':False}}
     request['messages'] = [{'role':'user','content':json.dumps(payload, ensure_ascii=False, separators=(',',':'))}]
     return request
 
 
-def convert_map(frozen, hierarchy, captions, raw):
+def convert_map(frozen, hierarchy, captions, raw, segments=None, audio_mode='none'):
+    import audio
+    audio.profile(audio_mode)
+    segments = [] if segments is None else segments
+    require(audio_mode == 'whisper' or not segments, 'Visual-only map requires empty ASR.')
+    audio.validate(segments)
     media = hierarchy['medium_nodes']
     require(len(media) == len(captions) and bool(media), 'Caption/Medium coverage mismatch.')
     previous_end = 0.0
@@ -221,7 +237,7 @@ def convert_map(frozen, hierarchy, captions, raw):
         require(isinstance(group['uncertainty_notes'], list) and all(isinstance(x,str) for x in group['uncertainty_notes']))
         previous = end
     require(previous == len(captions)-1, 'Organizer does not cover every Medium.')
-    return frozen['convert'](hierarchy, captions, [], raw)
+    return frozen['convert'](hierarchy, captions, segments, raw)
 
 
 def estimate(medium_count, image_count):

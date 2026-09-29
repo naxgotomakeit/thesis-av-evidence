@@ -101,7 +101,7 @@ This is `PORTABLE_API`, not exact thesis preprocessing: Anthropic Haiku captions
 substitute for historical Qwen2.5-VL-7B-Instruct. Fine=15 s, Medium=45 s,
 chronological representative frames, the pinned Variant-C Organizer contract,
 native R3 conversion and the preserved Direct online protocol are retained.
-No SigLIP index is built. Python uses the standard library; preparation additionally
+No SigLIP index is built. The default visual-only profile uses the Python standard library; preparation additionally
 requires `ffmpeg` and `ffprobe`, authorized media and disk space, but no local GPU.
 Paid execution requires environment-only `ANTHROPIC_API_KEY` and explicit approval.
 
@@ -110,6 +110,36 @@ uses `"answer_options": {"A":"...","B":"...","C":"...","D":"...","E":"..."}`;
 a thin adapter translates this object to the preserved loader's ordered option rows.
 READY artifacts remain immutable. ASK plans/results go outside the workspace,
 under ignored `demo_runs/<name>-outputs/qa_runs/<plan-sha>/`.
+
+### Optional speech during preparation
+
+```bash
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/visual --audio-mode none
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/av --audio-mode whisper
+```
+
+`none` remains the default: `THESIS_FINAL_VISUAL_ONLY` describes the thesis-final
+R3 **audio policy**, not exact preprocessing reproduction. The API-caption
+substitution warning still applies. No audio files are generated in this mode;
+the original visual-only Variant-C request continues to receive empty ASR.
+
+`whisper` is a `PORTABLE_AV_EXTENSION`, not the thesis-final condition. It uses
+mono 16 kHz extraction, local Whisper-small (English), and strict temporal-overlap
+alignment. A segment spanning Mediums is attached to each overlapping Medium.
+The separate preserved EgoPolice v2.2 AV-aware Organizer prompt distinguishes
+speech from visual confirmation and preserves disagreement. Dataset-specific
+EgoPolice inputs and retry policy are not reused.
+
+Install optional `openai-whisper`, PyTorch, NumPy and `soundfile`/libsndfile;
+CPU is supported and CUDA is used when available. Plan-only mode does not import
+Whisper, download weights or transcribe. Approved execution may download missing
+weights. A video without an audio stream fails explicitly in Whisper mode.
+Use a new workspace when switching profiles.
+
+Whisper adds `audio_16khz_mono.wav`, `audio_asr.json` and `audio_cost.json` to READY
+integrity coverage. ASK consumes **ASR text from the map**; it does not inspect
+raw audio or listen to waveform clips. Both modes retain explicit plan approval
+before execution. See the [usage guide](../docs/USAGE.md#optional-whisper-audio).
 
 ## Integrity and offline tests
 

@@ -55,6 +55,18 @@ def ask(args):
     actual = {str(f.relative_to(root)) for f in root.rglob('*') if f.is_file()}
     p.require(actual == set(manifest['files']) | {'preparation_manifest.json'}, 'Prepared workspace inventory changed.')
     preparation = p.read(root/'plan.json')
+    import audio
+    mode = preparation.get('audio_mode','none')
+    for field,value in audio.profile(mode).items():
+        p.require(manifest.get(field) == value, 'Audio profile mismatch.')
+    segments = []
+    if mode == 'whisper':
+        p.require({'audio_16khz_mono.wav','audio_asr.json','audio_cost.json'} <= manifest['files'].keys(), 'Missing audio integrity records.')
+        asr = p.read(root/'audio_asr.json')
+        p.require(asr['video_uid'] == manifest['video_uid'], 'ASR video identity mismatch.')
+        segments = asr['segments']
+        audio.validate(segments)
+        p.require(manifest['audio_sha256'] == manifest['files']['audio_16khz_mono.wav'] and manifest['segment_count'] == len(segments), 'Audio identity mismatch.')
     p.require(p.object_sha(preparation) == manifest['plan_sha256'])
     p.require(preparation['implementation'] == implementation_hashes(),'Implementation changed since preparation.')
     sys.path.insert(0,str(p.contained(p.ROOT,contract['source_root'])))
@@ -79,7 +91,7 @@ def ask(args):
     hierarchy = copy.deepcopy(p.read(root/'shared_hierarchy.json'))
     p.require(hierarchy['video_uid'] == manifest['video_uid'])
     p.require(hierarchy == p.geometry(preparation['frame_count'],manifest['video_uid']), 'Hierarchy geometry mismatch.')
-    native = p.convert_map(frozen,hierarchy,p.read(root/'medium_captions.json'),p.read(root/'organizer_output.json'))
+    native = p.convert_map(frozen,hierarchy,p.read(root/'medium_captions.json'),p.read(root/'organizer_output.json'),segments,mode)
     p.require(native == direct_input.map_document, 'Native map/source-caption binding mismatch.')
     for fine in hierarchy['fine_nodes']:
         fine['source_frame_path'] = str(p.contained(root,fine['source_frame_path']))
@@ -94,7 +106,7 @@ def ask(args):
         max_retries=cfg['max_retries'],max_total_usd=cfg['hard_api_budget_usd'],
         client=SimpleNamespace(messages=adapter))
     preview = {'system':agent._system(state),'messages':[agent._initial_message(state)],'tools':direct_action_tools()}
-    plan = {**p.FIDELITY,'mode':'FRESH_DIRECT','thesis_result':False,
+    plan = {**p.FIDELITY,**audio.profile(mode),'mode':'FRESH_DIRECT','thesis_result':False,
             'workspace_sha256':p.digest(root/'preparation_manifest.json'),
             'question_sha256':p.digest(question_path),'question_id':question['question_id'],
             'duration_sec':preparation['duration_sec'], 'frame_count':preparation['frame_count'],
@@ -126,7 +138,7 @@ def ask(args):
     adapter.transport = transport
     started = time.monotonic()
     telemetry = DirectController(resolver=resolver,max_turns=32,enable_action_correction=True).run(state=state,agent=agent)
-    result = {**p.FIDELITY,'new_execution_not_thesis_result':True,'question_id':state.question_id,
+    result = {**p.FIDELITY,**audio.profile(mode),'new_execution_not_thesis_result':True,'question_id':state.question_id,
               'route':'R3','final_prediction':state.final_prediction,'terminal_status':state.terminal_status,
               'transport_calls':transport.calls,'latency_sec':time.monotonic()-started,
               'recorded_api_cost_usd':agent.total_cache_aware_usd,

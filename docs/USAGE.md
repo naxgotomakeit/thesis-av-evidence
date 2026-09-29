@@ -246,6 +246,59 @@ available evidence. No continuation adapter remains executable in this demo.
 Benchmark media is not redistributed. Do not copy images, weights, credentials
 or unlicensed assets into this repository. See [attribution](ATTRIBUTION.md).
 
+## Optional Whisper audio
+
+Visual-only (the default):
+
+```bash
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/visual --audio-mode none
+```
+
+Optional AV extension:
+
+```bash
+python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/av --audio-mode whisper
+```
+
+Both commands first produce a plan. Review its model/profile identities, costs
+and SHA; rerun the same command with `--execute --approve-plan <PLAN_SHA256>`
+only when authorizing execution. Whisper transcription happens after approval,
+before caption API calls. Planning probes for an audio stream but performs no ASR.
+
+- `none`: `audio_profile=THESIS_FINAL_VISUAL_ONLY`; empty ASR and the unchanged
+  visual-only Variant-C Organizer. No placeholder audio artifacts are created.
+- `whisper`: `audio_profile=PORTABLE_AV_EXTENSION`; mono 16 kHz WAV, Whisper-small
+  with English transcription, segment timestamps, overlap alignment and the
+  separately pinned AV-aware v2.2 Organizer prompt. This is not the thesis-final
+  R3 condition. API captions remain a substitute for Qwen2.5-VL-7B-Instruct.
+
+Optional dependencies are ffmpeg/ffprobe, `openai-whisper`, PyTorch, NumPy and
+`soundfile` (with libsndfile). A GPU is not required. CUDA uses FP16; CPU does not.
+Word timestamps and conditioning on previous text are disabled, matching the
+preserved historical transcription settings. Model weights must be available
+locally or may be downloaded during approved execution. No model is loaded by
+the plan-only command. Whisper mode rejects video without an audio stream;
+choose `none` explicitly if appropriate. Speech recognition errors remain possible.
+
+The AV workspace additionally contains `audio_16khz_mono.wav`, `audio_asr.json`
+and `audio_cost.json`. The READY manifest covers all three hashes and records
+the audio profile, model/language, alignment rule, segment count, waveform hash
+and Organizer prompt identity. Native `exact_source_captions` and
+`exact_source_asr` retain their separate origins. ASR overlap is strict:
+`start < medium.end` and `end > medium.start`; a boundary-touching segment does
+not overlap, while a spanning segment may belong to multiple Mediums.
+
+ASK uses the same command and preserved Direct controller for either workspace.
+It consumes transcript-bearing map text, **not raw audio**, and has no audio
+inspection tool. No historical question or answer enters the new session.
+Transcripts add Organizer/Direct tokens: the plan includes a heuristic transcript
+allowance, not a measured token count or billing guarantee. Existing approval and
+request limits still apply. Private speech is sent as text to the API; use only
+authorized media and review privacy before approving execution.
+
+Implementation changes invalidate implementation-bound old plans/workspaces;
+choose a fresh workdir rather than editing a READY manifest or its hashes.
+
 ## Verify thesis evidence
 
 - **Direct R1:** follow [Table 5.5 in the index](../THESIS_ARTIFACT_INDEX.md#hourvideo-results)

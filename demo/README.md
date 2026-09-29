@@ -148,6 +148,22 @@ integrity coverage. ASK consumes **ASR text from the map**; it does not inspect
 raw audio or listen to waveform clips. Both modes retain explicit plan approval
 before execution. See the [usage guide](../docs/USAGE.md#optional-whisper-audio).
 
+## Open-ended Direct (portable extension)
+
+MCQ remains the default thesis-preserved A–E protocol. Open-ended answering is
+explicitly separate: `PORTABLE_OPEN_ENDED_EXTENSION`, not the thesis MCQ protocol.
+
+```bash
+python3 demo/ask.py --workdir demo_runs/example --answer-mode open --question "What is happening in the water bath?"
+```
+
+This generates a plan only, using the same READY workspace, frame resolver,
+inspection limits, transport and cost guard. It returns free text rather than an
+A–E option. Reuse the plan's generated `question_id` as `--question-id` when
+executing with `--execute --approve-plan <SHA>`. A changed question or identity
+requires a new plan. See the [open-ended guide](../docs/USAGE.md#open-ended-direct).
+The public example runner remains MCQ-only.
+
 ## Integrity and offline tests
 
 Both replays verify source SHA256 before presentation and fail closed on missing

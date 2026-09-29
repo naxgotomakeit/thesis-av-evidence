@@ -214,13 +214,14 @@ ASK is adaptive: budget for roughly 2–8 calls and USD 0.01–0.20 for short ex
 but it may use one call or more than eight; the transport ceiling is 66 attempts.
 The original Direct accounting budget is USD 1. Preparation also prints a much
 more conservative token-cap accounting allowance; Organizer retains its original
-64k output cap. No paid smoke test has yet validated model availability or billing.
+64k output cap. These estimates do not guarantee future model availability or billing.
 Pricing assumptions are [Anthropic Haiku 4.5 input/output rates](https://platform.claude.com/docs/en/about-claude/pricing):
 USD 1 / 5 per million tokens, with Direct cache-aware pricing retained separately.
 
 Full historical preparation still requires omitted embeddings/index components
 and historical caption models. This Direct-targeted prototype does not build a
-SigLIP index, process audio, implement a local staged Planner, or recreate thesis results.
+SigLIP index, implement a local staged Planner, or recreate thesis results.
+Optional Whisper audio preparation is described below; ASK does not inspect raw audio.
 
 ## Further reproduction requirements
 
@@ -298,6 +299,61 @@ authorized media and review privacy before approving execution.
 
 Implementation changes invalidate implementation-bound old plans/workspaces;
 choose a fresh workdir rather than editing a READY manifest or its hashes.
+
+## Open-ended Direct
+
+MCQ Direct remains the thesis-preserved A–E protocol and the default for
+`--question-json`. Open-ended Direct is a **PORTABLE_OPEN_ENDED_EXTENSION** using
+the same prepared workspace and Direct inspection loop, not a thesis result.
+It requires explicit `--answer-mode open`; a text question never switches modes
+implicitly. Do not supply `--question-json` or answer options in open mode.
+
+```bash
+python3 demo/ask.py --workdir demo_runs/example --answer-mode open \
+  --question "What is happening in the water bath?"
+```
+
+This is plan-only. The plan records a newly generated question ID, the question,
+`answer_mode=open`, `thesis_preserved_protocol=false`, original and derived
+prompt hashes, and the extension implementation hash. To execute later, reuse
+that question ID and the exact text:
+
+```bash
+python3 demo/ask.py --workdir demo_runs/example --answer-mode open \
+  --question "What is happening in the water bath?" \
+  --question-id <PLAN_QUESTION_ID> --execute --approve-plan <PLAN_SHA>
+```
+
+Environment-only credentials and separate cost approval still apply. A changed
+question, ID, prompt, implementation or workspace changes the approved plan.
+No previous question, answer or inspection state is loaded. The public Wikimedia
+example runner still exposes only its two MCQs.
+
+The derived prompt removes MCQ selection wording while preserving map navigation,
+evidence grounding, uncertainty, timestamp limits, and the three-images-per-turn /
+16-unique-images limits. The separate `final_answer` tool requires a non-empty
+`answer` string and a brief `reason`; malformed or empty answers are rejected.
+Only explicit recorded rationale is logged, never reconstructed hidden reasoning.
+Inspection is optional: the model may answer from the map if sufficient.
+
+Outputs include the question, free-text answer, recorded rationale, inspected
+timestamps/frame hashes, usage, cost, latency and extension identity. They remain
+outside the READY workspace. ASK consumes ASR text, not waveform audio.
+
+Diagnostic limitation: compact ASK results retain an invalid-action event and
+correction count, but not the rejected provider payload or detailed parser-error
+category. An eventual final answer alone cannot establish the exact recovery
+cause or whether correction changed its meaning. A completed run also does not
+certify factual correctness; map/caption errors may persist in the answer.
+
+Robustness to structured-output errors. In the open-ended smoke test, the selected model produced one malformed action that did not satisfy the expected tool/schema format. The Direct runtime detected the invalid action and used its built-in correction/retry mechanism to continue execution successfully. This demonstrates recovery from occasional structured-output failures without assuming that every model or configuration will exhibit the same behavior. The smoke test was not specifically configured to maximize first-pass structured-output reliability.
+
+Reader compatibility: this release accepts the exact audited predecessor
+`ask.py` SHA256 `fed80c6194f35d54c99c03bf9c189504b9979f1a105be3a49f0e8fc71ea4bf48`
+in preparation manifests, as well as the current reader. All other implementation
+hashes and every workspace artifact still require exact matches. No manifest is
+rewritten; unknown reader versions fail closed. New ASK plans bind the current
+implementation and need new approval, including for MCQ.
 
 ## Verify thesis evidence
 

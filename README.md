@@ -54,6 +54,17 @@ Prepare once, then ask independent A–E questions; ASK writes to separate ignor
 For evidence coverage, integrity checks and reproduction requirements, see the
 [demo guide](demo/README.md) and [usage guide](docs/USAGE.md).
 
+### Public Live example
+
+Run the reproducible Wikimedia example:
+
+```bash
+python3 demo/run_live_example.py --question audio
+python3 demo/run_live_example.py --question visual
+```
+
+See [`demo/example_live/README.md`](demo/example_live/README.md) for details.
+
 ## Repository structure
 
 - `src/`, `config/`, `configs/`, `scripts/`, `tests/` — maintained canonical AV-QA baseline and regression material.

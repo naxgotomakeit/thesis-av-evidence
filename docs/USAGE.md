@@ -2,6 +2,20 @@
 
 ## Quick start
 
+### Environment
+
+Recommended: Python 3.11 (tested: 3.11.11). Live preparation requires system
+`ffmpeg` and `ffprobe` on PATH. In a clean Python environment, from the repository root:
+
+```bash
+python3.11 -m pip install -r requirements.txt
+```
+
+Whisper-small weights may be downloaded on first approved audio execution.
+`ANTHROPIC_API_KEY` is required only for paid/live API execution. Replay-only
+use needs just Python's standard library, without installing the Whisper stack.
+See [environment details](ENVIRONMENT.md) for dependency scope and platform caveats.
+
 Clone this repository, enter its root and use Python 3.10 or newer. The two
 replays require no additional Python packages, API key, GPU, media or network.
 

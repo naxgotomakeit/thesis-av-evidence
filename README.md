@@ -14,17 +14,23 @@ The distinction is how planning and evidence gathering are organized; it is not 
 
 ## Key findings
 
-- **R1/R3 resource comparison:** On the frozen context-feasible paired-150 subset, R3 used **20.9% fewer post-Planner requests** and **37.3% fewer post-Planner total tokens** than R1, with **52 versus 51 correct answers**, respectively. This is a read-only extraction/recomputation from frozen Eval300. It does not establish accuracy equivalence and does not remove R3's full-set context-capacity limitation.
-- **Flat/H comparison:** Dense H-15 completed **270/300** questions versus Flat-30's **254/300**, with **81 versus 82 correct answers**. This is specific to these configurations and budgets; it is not evidence that hierarchical retrieval is universally more accurate or faster.
-- **Staged/Direct comparison:** Direct scored **32/100** versus Full Staged's **24/100** on the supplementary paired-100 comparison. The difference was **not statistically significant** (exact McNemar **p = 0.1686**).
+The primary goal is to reduce online resource use for long-video QA. These comparisons examine the offline index, the evidence budget and the value of additional online orchestration.
+
+- **Indexer design changes downstream efficiency.** R1 and R3 are compared under the same downstream QA design to isolate the effect of the offline index representation. On the frozen context-feasible paired-150 subset, R3 used **20.9% fewer post-Planner requests** and **37.3% fewer post-Planner total tokens** than R1, with **R3 52 versus R1 51 correct answers**. This suggests that a better-organized offline index can shift work away from online inference, with similar observed correctness on this subset. This is a read-only extraction/recomputation from frozen Eval300; it does not establish accuracy equivalence or remove R3's full-set context-capacity limitation. The largest observed R3-versus-R1 quality difference appeared under the Direct downstream, where the prepared representation is exposed more directly to the answering model: **Direct R3 103/300 versus Direct R1 visual-only 85/300**. This does not establish universal R3 superiority.
+- **Evidence budget has a configuration-specific sweet spot.** Flat/H explores how to use the prepared representation and how much evidence to expose. **Flat-30 completed 254/300 with 82 correct; Dense H-15 completed 270/300 with 81 correct; Dense H-30 completed 249/300 with 78 correct.** Moderate hierarchical retrieval improved completion with similar observed correctness, but increasing the budget further did not produce monotonic gains. More evidence is not necessarily better evidence; these results do not show that hierarchy is always more accurate or faster.
+- **More online orchestration did not show a clear quality benefit.** Full Staged uses Planner → retrieval → shared investigation → evidence inspection → answer; Direct uses prepared map → map-guided model loop → optional `inspect_frames` → answer. On the supplementary paired-100 comparison, **Direct scored 32/100 versus Full Staged's 24/100**; the difference was **not statistically significant** (exact McNemar **p = 0.1686**). Recorded execution cost was approximately **$4.30 for Direct**, **$11.20 for Full Staged downstream**, and **$14.49 for reconstructed Full Staged including historical Planner cost**. These figures have different execution/accounting scopes and are not one perfectly controlled contemporaneous cost experiment. The comparison did not demonstrate a clear answer-quality benefit from additional orchestration, while the staged route introduced greater orchestration complexity and higher recorded execution cost in this comparison.
 
 For authoritative tables, figures, per-question records and provenance, see [`THESIS_ARTIFACT_INDEX.md`](THESIS_ARTIFACT_INDEX.md).
 
+## Design implication
+
+The results suggest emphasizing how long-video evidence is structured, filtered and exposed to the model rather than simply adding downstream reasoning stages. A future-facing interpretation—not a directly proven empirical result—is that, as multimodal models become more capable, systems may gain more from deciding what evidence to expose, when and at what online cost than from increasingly elaborate orchestration.
+
 ## Which path should I use?
 
-- **Replay Staged:** Inspect the decomposed Planner → retrieval → evidence → answer process. The preserved example uses an API Planner with local downstream execution.
-- **Replay Direct:** Inspect a preserved map-guided tool-use execution, including selective frame inspection.
-- **Portable Live:** Prepare a new video once, then ask multiple questions. Direct is the default online route because it provides a simpler map-guided interface with selective frame inspection and is already supported by the portable workspace. This is an engineering choice, not a claim of general accuracy superiority.
+- **Replay Staged:** Inspect the decomposed Planner → retrieval → evidence → answer process to understand the staged architecture and preserved Planner/retrieval behavior. The preserved example uses an API Planner with local downstream execution.
+- **Replay Direct:** Inspect the simpler preserved map-guided tool-use path, including selective frame inspection.
+- **Portable Live:** Prepare a new video once, then ask multiple questions. Direct is the default online route because its simpler map-guided interface and selective frame inspection are already supported by the portable workspace. The supplementary paired-100 comparison did not demonstrate a clear answer-quality benefit from more staging, while Direct had lower recorded execution cost and complexity, subject to the accounting qualifications above. This is an engineering/efficiency recommendation, not a claim that Direct is universally more accurate.
 
 Replay shows preserved historical execution with no new inference. Live performs fresh execution; its outputs are not thesis results.
 

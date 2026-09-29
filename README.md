@@ -2,13 +2,50 @@
 
 Training-free hierarchical video indexing and question-conditioned evidence selection for efficient long-video question answering.
 
-This repository is the examiner-facing evidence record for a master's thesis on efficient audio-visual evidence selection for egocentric long-video question answering. It contains the maintained canonical baseline and preserved, auditable artifacts for the formal experiments reported in the dissertation.
+The system prepares a video representation offline, then uses each question to locate relevant evidence and produce an answer. This repository preserves the thesis evidence and execution history while also providing runnable portable demonstrations.
 
-## How to read this repository
+## Two online routes
 
-For multilingual frozen reports, use the [English reading guide](docs/ENGLISH_READING_GUIDE.md). It provides English summaries while preserving the original evidence bytes.
+**Staged:** Question → Planner → hierarchical retrieval / shared investigation → evidence inspection → final answer.
 
-Start with [the thesis artifact index](THESIS_ARTIFACT_INDEX.md). It maps thesis locations to the narrowest available code, configuration, result, per-question evidence, and freeze record. The accompanying guides explain [which result is authoritative](docs/RESULT_AUTHORITY.md), [the research evolution](docs/EXPERIMENT_OVERVIEW.md), [reproduction boundaries](docs/REPRODUCTION.md), and [Git/compute history](docs/GIT_HISTORY.md).
+**Direct:** Question + prepared map → map-guided model loop → optional `inspect_frames` → final answer.
+
+The distinction is how planning and evidence gathering are organized; it is not an assumption that either route is generally more accurate.
+
+## Key findings
+
+- **R1/R3 resource comparison:** On the frozen context-feasible paired-150 subset, R3 used **20.9% fewer post-Planner requests** and **37.3% fewer post-Planner total tokens** than R1, with **52 versus 51 correct answers**, respectively. This is a read-only extraction/recomputation from frozen Eval300. It does not establish accuracy equivalence and does not remove R3's full-set context-capacity limitation.
+- **Flat/H comparison:** Dense H-15 completed **270/300** questions versus Flat-30's **254/300**, with **81 versus 82 correct answers**. This is specific to these configurations and budgets; it is not evidence that hierarchical retrieval is universally more accurate or faster.
+- **Staged/Direct comparison:** Direct scored **32/100** versus Full Staged's **24/100** on the supplementary paired-100 comparison. The difference was **not statistically significant** (exact McNemar **p = 0.1686**).
+
+For authoritative tables, figures, per-question records and provenance, see [`THESIS_ARTIFACT_INDEX.md`](THESIS_ARTIFACT_INDEX.md).
+
+## Which path should I use?
+
+- **Replay Staged:** Inspect the decomposed Planner → retrieval → evidence → answer process. The preserved example uses an API Planner with local downstream execution.
+- **Replay Direct:** Inspect a preserved map-guided tool-use execution, including selective frame inspection.
+- **Portable Live:** Prepare a new video once, then ask multiple questions. Direct is the default online route because it provides a simpler map-guided interface with selective frame inspection and is already supported by the portable workspace. This is an engineering choice, not a claim of general accuracy superiority.
+
+Replay shows preserved historical execution with no new inference. Live performs fresh execution; its outputs are not thesis results.
+
+## Quick setup
+
+Recommended: **Python 3.11**. Replay uses only Python's standard library.
+
+System requirements for portable Live:
+
+- ffmpeg
+- ffprobe
+
+Install the portable demo dependencies:
+
+```bash
+python3.11 -m pip install -r requirements.txt
+```
+
+For GPU deployment, install a PyTorch build compatible with the target CUDA/runtime.
+`ANTHROPIC_API_KEY` is required only for live API execution.
+See [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) for details.
 
 ## Demo
 
@@ -76,6 +113,12 @@ python3 demo/run_live_example.py --question visual
 
 See [`demo/example_live/README.md`](demo/example_live/README.md) for details.
 
+## How to read this repository
+
+For multilingual frozen reports, use the [English reading guide](docs/ENGLISH_READING_GUIDE.md). It provides English summaries while preserving the original evidence bytes.
+
+Start with [the thesis artifact index](THESIS_ARTIFACT_INDEX.md). It maps thesis locations to the narrowest available code, configuration, result, per-question evidence, and freeze record. The accompanying guides explain [which result is authoritative](docs/RESULT_AUTHORITY.md), [the research evolution](docs/EXPERIMENT_OVERVIEW.md), [reproduction boundaries](docs/REPRODUCTION.md), and [Git/compute history](docs/GIT_HISTORY.md).
+
 ## Repository structure
 
 - `src/`, `config/`, `configs/`, `scripts/`, `tests/` — maintained canonical AV-QA baseline and regression material.
@@ -110,6 +153,8 @@ The thesis identifies the reported version; frozen artifacts record each run. Di
 ## Reproduction boundary
 
 The repository intentionally excludes benchmark source media, complete frame pools, model weights, caches, large embeddings/index payloads, credentials, and material whose redistribution status is not confirmed. This does not remove the retained result, per-question, manifest, and checksum evidence. See [reproduction guidance](docs/REPRODUCTION.md) and [data / third-party attribution](docs/ATTRIBUTION.md).
+
+See [public-distribution exceptions](docs/PUBLIC_DISTRIBUTION_EXCEPTIONS.md) for withheld files and the distinction between public-subset verification and a complete original-manifest pass.
 
 ## Git history
 

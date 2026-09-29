@@ -46,6 +46,17 @@ python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/exa
 python3 demo/ask.py --workdir demo_runs/example --question-json question.json
 ```
 
+The same prepared workspace also supports open-ended Direct answering:
+
+```bash
+python3 demo/ask.py \
+  --workdir demo_runs/example \
+  --answer-mode open \
+  --question "What is happening in the video?"
+```
+
+Open-ended answering reuses the same map-guided inspection loop; the thesis-preserved Direct protocol remains the A–E MCQ path.
+
 The `PORTABLE_API` caption backend substitutes for the thesis Qwen model; this is
 not exact thesis preprocessing. Paid execution requires environment credentials
 and separate plan approval. The replay launcher's `--mode live` remains reserved.

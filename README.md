@@ -1,8 +1,8 @@
-# Thesis AV Evidence
+# Efficient Long-Video QA — Thesis Evidence & Reproduction
+
+Training-free hierarchical video indexing and question-conditioned evidence selection for efficient long-video question answering.
 
 This repository is the examiner-facing evidence record for a master's thesis on efficient audio-visual evidence selection for egocentric long-video question answering. It contains the maintained canonical baseline and preserved, auditable artifacts for the formal experiments reported in the dissertation.
-
-The project developed from reusable audio-visual indexing and hierarchical retrieval into HourVideo and EgoPolice evaluations. Later formal runs occurred on school, DGX, and Myriad compute environments; their preserved outputs were subsequently imported without rewriting their experimental lineage. The import date is not an experiment date.
 
 ## How to read this repository
 
@@ -12,23 +12,37 @@ Start with [the thesis artifact index](THESIS_ARTIFACT_INDEX.md). It maps thesis
 
 ## Demo
 
-API-Planner + Local Downstream Frozen Pipeline Replay:
+### Replay 1 — Staged pipeline
+
+Offline replay of a preserved Planner → retrieval → answer trace.
+No API key or model inference required.
+The preserved run uses an API Planner with local downstream execution.
 
 ```bash
 python3 demo/run_demo.py --mode replay-staged
 ```
 
-Frozen Direct tool-use and answer replay:
+### Replay 2 — Direct tool-use
+
+Offline replay of a preserved Direct inspect-frames → answer trace.
+No API key or model inference required.
 
 ```bash
 python3 demo/run_demo.py --mode replay-direct
 ```
 
 Both modes read preserved records without inference, media, API keys or network.
-For fresh API-assisted preparation and Direct answering (plan-only until approved):
+
+### Live — Prepare once, ask many
+
+Prepare a new video, then ask independent A–E questions using Direct.
+Both commands are plan-only until approved.
 
 ```bash
 python3 demo/prepare.py --video /path/to/owned-video.mp4 --workdir demo_runs/example --caption-backend api
+```
+
+```bash
 python3 demo/ask.py --workdir demo_runs/example --question-json question.json
 ```
 
@@ -76,5 +90,7 @@ The thesis identifies the reported version; frozen artifacts record each run. Di
 The repository intentionally excludes benchmark source media, complete frame pools, model weights, caches, large embeddings/index payloads, credentials, and material whose redistribution status is not confirmed. This does not remove the retained result, per-question, manifest, and checksum evidence. See [reproduction guidance](docs/REPRODUCTION.md) and [data / third-party attribution](docs/ATTRIBUTION.md).
 
 ## Git history
+
+The project developed from reusable audio-visual indexing and hierarchical retrieval into HourVideo and EgoPolice evaluations. Later formal runs occurred on school, DGX, and Myriad compute environments; their preserved outputs were subsequently imported without rewriting their experimental lineage. The import date is not an experiment date.
 
 The July–August Git history records active development. Formal experiments later ran directly in several compute environments, then their preserved artifacts were archived in commits dated 2026-09-26 and 2026-09-27. Preserved author/committer dates and branch lineage are described in [Git history](docs/GIT_HISTORY.md).

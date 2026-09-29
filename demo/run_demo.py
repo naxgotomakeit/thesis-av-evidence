@@ -100,59 +100,69 @@ def replay_staged(manifest, data):
         observations = [e for e in cited if e['evidence_type'] == 'reviewed_visual_observation'
                         and subject.lower() in json.loads(e['source_content'])['finding'].lower()
                         and medium['interval'][0] <= e['timestamp_sec'] <= medium['interval'][1]]
-        return ' → '.join(short(e) for e in [coarse, medium, *observations])
+        return [coarse, medium, *observations]
     stages = {r['stage'] for r in filtered['attempts']}
     require({'shared_investigation', 'claim_execution_batch', 'direct_final'} <= stages)
-    print('MODE: API-Planner + Local Downstream Frozen Pipeline Replay')
-    print('Read-only preserved formal run; not a fully local Planner run.')
-    print('No model inference is performed.')
-    print('No retrieval, visual inspection, or experiment is re-run.')
-    print('EXPERIMENT: ' + manifest['experiment'])
-    print(f'Question ID: {qid}; route: {route}')
-    print('PIPELINE SUMMARY')
-    print('Question → Planner for option ' + answer['selected_option_id'] + ': ' + ' + '.join(plan['selected_coarse_ids']))
-    print('→ Phone: ' + chain('Phone'))
-    print('→ Kettle: ' + chain('Kettle'))
-    print('→ Investigation ' + investigation['investigation_status'] + ' → Answer ' + answer['selected_option_id'])
-    print('QUESTION\n' + question['question_text'])
-    print(' | '.join(f"{o['option_id']}: {o['text']}" for o in question['answer_options']))
-    print('PREPARED REPRESENTATION')
-    print('Recorded coarse/medium/fine excerpts; full source map is not loaded.')
-    print('Recorded map SHA256 (reference only): ' + planner['input_asset_sha256'])
-    print('RECORDED PLANNER DECISION / RATIONALE')
-    print(' | '.join(f"{p['requirement_id'].split('::')[-1]}: {', '.join(p['selected_coarse_ids'])}" for p in planner['output']['requirement_plans']))
-    print('Recorded rationale: ' + plan['selection_reason'])
+    print('Replay 1 — Staged pipeline')
+    print('Offline replay of preserved records.')
+    print('No inference, API calls, retrieval, or inspection are re-run.')
+    print('\nQUESTION\n' + question['question_text'])
+    for option in question['answer_options']:
+        print(f"{option['option_id']}: {option['text']}")
+    print('\nPLANNER DECISION')
+    for selection in planner['output']['requirement_plans']:
+        option = selection['requirement_id'].split('::')[-1].removeprefix('option_').upper()
+        print(option + ' → ' + ' + '.join(selection['selected_coarse_ids']))
+    print('\nRECORDED PLANNER RATIONALE (option ' + answer['selected_option_id'] + ')')
+    print(plan['selection_reason'])
     print('Note: model-authored rationale uses ordinal wording "region 3/8"; structured recorded selections are ' + '/'.join(plan['selected_coarse_ids']) + '. Original wording is preserved.')
-    print('RECORDED DECISION TRACE (presentation summary)')
-    print('Planner → Shared investigation → Evidence inspection → Investigation ' + investigation['investigation_status'] + ' → Direct final answer')
-    print('Exact route events: route_events.jsonl; low-level model calls: model_attempts.jsonl.')
-    print('HIERARCHICAL RETRIEVAL / RECORDED EVIDENCE')
-    for identity in investigation['cited_evidence_ids']:
-        e = evidence[identity]
+    print('\nEVIDENCE TRACE')
+    print('Planner → Shared investigation → Evidence inspection → Investigation ' + investigation['investigation_status'] + ' → Final answer generation')
+    def show_evidence(e):
+        identity = e['evidence_id']
         content = e['source_content']
         if e['evidence_type'] == 'reviewed_visual_observation':
             content = json.loads(content)['finding']
         support = ' | recorded supporting inspection; not a final citation' if e['evidence_type'] == 'reviewed_visual_observation' and identity not in answer['supporting_evidence_ids'] else ''
         print(f"{identity.split('::')[-1]} | {e.get('interval', e.get('timestamp_sec'))} s | {e['evidence_type']}" + support)
         print('  ' + excerpt(content, 180))
-    print('INSPECTION / SUFFICIENCY')
+    shown = set()
+    for subject in ('Phone', 'Kettle'):
+        items = chain(subject)
+        print(subject + ': ' + ' → '.join(short(e) for e in items))
+        for e in items:
+            show_evidence(e)
+            shown.add(e['evidence_id'])
+    for e in cited:
+        if e['evidence_id'] not in shown:
+            show_evidence(e)
+    print('\nINSPECTION / SUFFICIENCY')
     print('Recorded investigation status: ' + investigation['investigation_status'])
-    print('Recorded established facts: ' + excerpt(investigation['established_facts']))
-    print('FROZEN FINAL ANSWER')
+    print('Recorded established facts: ' + investigation['established_facts'])
+    requested = investigation['requested_coarse_ids']
+    print('Further search: ' + ('requested regions ' + ', '.join(requested) if requested else 'none requested') + ' in the final snapshot; requested_coarse_ids=' + json.dumps(requested) + '.')
+    print('\nFINAL ANSWER (frozen)')
     print(answer['selected_option_id'] + ' — ' + answer['answer_text'])
-    print('Recorded rationale: ' + excerpt(answer['reason']))
+    print('Recorded rationale: ' + answer['reason'])
     print('Final citations: ' + ', '.join(e.split('::')[-1] for e in answer['supporting_evidence_ids']))
     print('Termination: ' + answer['final_status'] + '; correctness: not asserted by this replay.')
-    print('RECORDED RESOURCE USE (not replay resource use)')
+    print('\nRECORDED RESOURCE USE (historical accounting; not replay resource use)')
     usage = planner['usage']
     print(f"Planner: {usage['input_tokens']} input / {usage['output_tokens']} output tokens; estimated USD {usage['estimated_cost_usd']}")
     rows = filtered['attempts']
     print(f"Post-Planner: {sum(r['input_tokens'] for r in rows)} input / {sum(r['output_tokens'] for r in rows)} output tokens; {sum(r['physical_image_transmissions'] for r in rows)} image transmissions")
     print(f"Post-Planner elapsed: {end[0]['e2e_sec']:.3f} s; scope: {end[0]['e2e_scope']}")
-    print('PROVENANCE — all source SHA256 checks passed')
+    print('\nPROVENANCE / TECHNICAL DETAILS')
+    print('API-Planner + Local Downstream Frozen Pipeline Replay; not a fully local Planner run.')
+    print('Experiment: ' + manifest['experiment'])
+    print(f'Question ID: {qid}; route: {route}')
+    print('Full source map exists in the archived Variant-C package but is not loaded by this compact replay.')
+    print('Recorded map SHA256 (reference only): ' + planner['input_asset_sha256'])
+    print('All source SHA256 checks passed.')
     print('Manifest / full paths and hashes: demo/examples/local-staged-replay.json')
     print('Artifacts: ' + ', '.join(Path(manifest['sources'][role]['path']).name for role in ('planner', 'investigation', 'answer', 'attempts', 'events')))
-    print('LIMITATIONS')
+    print('Exact route events: route_events.jsonl; low-level model calls: model_attempts.jsonl.')
+    print('\nLIMITATIONS')
     print(' '.join(manifest['known_limitations']))
 
 

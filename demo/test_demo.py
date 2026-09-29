@@ -28,7 +28,9 @@ class DemoTests(unittest.TestCase):
         for mode in ('replay-staged', 'replay-direct'):
             with self.subTest(mode=mode), contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(demo.main(['--mode', mode]), 0)
-            self.assertIn('No model inference is performed.', out.getvalue())
+            expected = ('No inference, API calls, retrieval, or inspection are re-run.'
+                        if mode == 'replay-staged' else 'No model inference is performed.')
+            self.assertIn(expected, out.getvalue())
             self.assertLessEqual(len(out.getvalue().splitlines()), 80)
         self.assertIn('E — Bowl', out.getvalue())
         self.assertIn('correctness: True', out.getvalue())
@@ -142,6 +144,37 @@ class DemoTests(unittest.TestCase):
             demo.replay_staged(m, d)
         self.assertIn('22145 input / 2808 output', out.getvalue())
         self.assertIn('API-Planner + Local Downstream Frozen Pipeline Replay', out.getvalue())
+
+    def test_staged_presentation_preserves_recorded_content(self):
+        m, d = demo.load_bundle('local-staged-replay.json')
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            demo.replay_staged(m, d)
+        text = out.getvalue()
+        headings = ['Replay 1 — Staged pipeline','\nQUESTION\n','\nPLANNER DECISION\n',
+                    '\nRECORDED PLANNER RATIONALE','\nEVIDENCE TRACE\n',
+                    '\nINSPECTION / SUFFICIENCY\n','\nFINAL ANSWER (frozen)\n',
+                    '\nRECORDED RESOURCE USE','\nPROVENANCE / TECHNICAL DETAILS\n','\nLIMITATIONS\n']
+        positions = [text.index(h) for h in headings]
+        self.assertEqual(positions, sorted(positions))
+        for plan in d['planner']['output']['requirement_plans']:
+            option = plan['requirement_id'].split('::')[-1].removeprefix('option_').upper()
+            self.assertIn(option + ' → ' + ' + '.join(plan['selected_coarse_ids']),text)
+            if option == 'B': self.assertIn(plan['selection_reason'],text)
+        self.assertIn('Phone: C04 → M012 → F036',text)
+        self.assertIn('Kettle: C09 → M033',text)
+        for e in d['investigation']['evidence']:
+            if e['evidence_id'] in d['investigation']['cited_evidence_ids']:
+                content = json.loads(e['source_content'])['finding'] if e['evidence_type']=='reviewed_visual_observation' else e['source_content']
+                self.assertIn(demo.excerpt(content,180),text)
+        self.assertIn('recorded supporting inspection; not a final citation',text)
+        self.assertIn(d['investigation']['established_facts'],text)
+        self.assertIn('none requested in the final snapshot; requested_coarse_ids=[]',text)
+        answer=d['answer']['answer']
+        self.assertIn(answer['reason'],text)
+        self.assertIn('Final citations: '+', '.join(e.split('::')[-1] for e in answer['supporting_evidence_ids']),text)
+        self.assertIn('→ Final answer generation',text)
+        self.assertNotIn('→ Direct final answer',text)
+        self.assertIn('Full source map exists in the archived Variant-C package',text)
 
 
 if __name__ == '__main__':

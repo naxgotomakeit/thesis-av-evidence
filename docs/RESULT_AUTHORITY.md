@@ -6,6 +6,8 @@ The submitted thesis determines which result/version was reported; frozen artifa
 
 ## Direct R1
 
+The [recovered corrected-R1 evidence-support audit](../experiments/hourvideo/direct_r1_visual_only_thesis/corrected_evidence_audit/README.md) preserves the 300-question post-review/deblinded label and outcome closure (175 new reviews, 125 validated reuses). It documents evidence support for the corrected visual-only lineage; this pointer does not change result authority. Do not join its neutral IDs to other audits without origin/source/question identity.
+
 Earlier formal Direct R1 is **88/300**, with 300 predictions and ASR-exposed maps on 175 routes. It is [HISTORICAL / SUPERSEDED-FOR-THESIS](../experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/SUPERSEDED_FOR_THESIS/old_formal_88/).
 
 The thesis result is **85/300**, 299 completed: 175 visual-only routes were rerun and 125 routes were SHA-verified for reuse. Cite [the thesis data summary — English summary](english/DIRECT_R1.md) ([frozen original](../experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/thesis_data_package/DIRECT_VISUAL_ONLY_EVAL300_DATA_SUMMARY.md)), [per-question output](../experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/final_outputs/scored_results_with_gold.json), and [route reuse manifest](../experiments/hourvideo/direct_r1_visual_only_thesis/artifacts/manifests/route_reuse_manifest_v8.json).

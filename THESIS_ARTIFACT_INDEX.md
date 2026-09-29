@@ -29,6 +29,8 @@ Use the [English reading guide](docs/ENGLISH_READING_GUIDE.md) for all protected
 
 ## ABD and evidence-support audit
 
+Corrected Direct R1: [recovered visual-only evidence-support audit and limitations](experiments/hourvideo/direct_r1_visual_only_thesis/corrected_evidence_audit/README.md) → [300 frozen labels](experiments/hourvideo/direct_r1_visual_only_thesis/corrected_evidence_audit/r1_visual_only_evidence_audit_v1/r1_visual_only_evidence_labels_frozen.jsonl) → [post-freeze outcomes](experiments/hourvideo/direct_r1_visual_only_thesis/corrected_evidence_audit/r1_visual_only_evidence_audit_v1/r1_visual_only_evidence_labels_with_outcomes.csv) → [original checksums](experiments/hourvideo/direct_r1_visual_only_thesis/corrected_evidence_audit/r1_visual_only_evidence_audit_v1/SHA256SUMS.txt). This 300-question deblinded results archive is separate from both 900-record audit populations below.
+
 | Thesis location / claim | Experiment identity | Result / per-question evidence | Freeze / caveat |
 |---|---|---|---|
 | UNVERIFIED THESIS-LOCATION BINDING — ABD | ABD A/B/D; FORMAL-MAIN | [formal report](experiments/hourvideo/abd_evidence_audit/content/abd_lineage/00_formal/analysis/ABD_FINAL_REPORT.md), [arm summary](experiments/hourvideo/abd_evidence_audit/content/abd_lineage/00_formal/analysis/abd_arm_summary.csv) | [formal archive manifest](experiments/hourvideo/abd_evidence_audit/content/abd_lineage/00_formal/analysis/archive_manifest.json) |
